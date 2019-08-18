@@ -30,6 +30,7 @@ module Schemas
   -- * Functions
   , finite
   , theSchema
+  , Schema
   , pack
   , unpack
   , UnpackError(..)
@@ -56,18 +57,18 @@ import qualified Data.Vector           as V
 import           GHC.Exts
 import           GHC.Generics
 
-data ValueType
+data Schema
   = Bool
   | Number
   | String
-  | Array ValueType
+  | Array Schema
   | Enum   [Text]
-  | Record [(Text, ValueType, Bool)]   -- ^ name, type, required
-  | Union  [(Text, ValueType)]
+  | Record [(Text, Schema, Bool)]   -- ^ name, type, required
+  | Union  [(Text, Schema)]
   deriving (Eq, Generic, Show, ToJSON, FromJSON)
 
 -- | TypedSchema is designed to be used with higher-kinded types, Barbie style
---   Its main addition over 'ValueType' is converting from a JSON 'Value'
+--   Its main addition over 'Schema' is converting from a JSON 'Value'
 data TypedSchemaFlex from a where
   TBool :: (Bool -> a) -> (from -> Bool) -> TypedSchemaFlex from a
   TNumber :: (Scientific -> a) -> (from -> Scientific) -> TypedSchemaFlex from a
@@ -152,11 +153,11 @@ data RecordField a where
   Required :: Text -> TypedSchema a -> RecordField a
   Optional  :: Text -> TypedSchema a -> RecordField (Maybe a)
 
--- | Ensures a 'ValueType' is finite by enforcing a max depth
-finite :: Int -> ValueType -> ValueType
+-- | Ensures a 'Schema' is finite by enforcing a max depth
+finite :: Int -> Schema -> Schema
 finite = go
  where
-  go :: Int -> ValueType -> ValueType
+  go :: Int -> Schema -> Schema
   go 0 (Record _) = Record []
   go d (Record opts) =
     Record $ map (\(n, sc, opt) -> (n, go (d - 1) sc, opt)) opts
@@ -165,7 +166,7 @@ finite = go
   go _ other        = other
 
 -- | Folds over a record of 'RecordField' things to reconstruct an untyped schema
-theSchema :: TypedSchemaFlex from a -> ValueType
+theSchema :: TypedSchemaFlex from a -> Schema
 theSchema TBool{} = Bool
 theSchema PureSchema{} = Record []
 theSchema TNumber{} = Number
@@ -238,7 +239,7 @@ unpack = go []
     go ctx _ _ = Left $ SchemaMismatch ctx
 
 -- | `isSubtype sub sup` returns a witness that sub is a subtype of sup, i.e. a cast function
-isSubtype :: ValueType -> ValueType -> Maybe (Value -> Value)
+isSubtype :: Schema -> Schema -> Maybe (Value -> Value)
 isSubtype sub sup = go sup sub
  where
   go (Array a) (Array b) = do
