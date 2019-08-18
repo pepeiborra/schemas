@@ -1,9 +1,12 @@
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE OverloadedLabels   #-}
-{-# LANGUAGE OverloadedLists    #-}
-{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DerivingStrategies    #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE OverloadedLabels      #-}
+{-# LANGUAGE OverloadedLists       #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE StandaloneDeriving    #-}
 module Example where
 
 import           Data.Barbie
@@ -20,7 +23,7 @@ schemaReligion :: TypedSchema Religion
 schemaReligion = enum (fromString . show) enumerate
 
 data Education = NoEducation | Degree {unDegree :: String} | PhD {unPhD :: String}
-  deriving (Generic)
+  deriving (Generic, Show)
 
 schemaEducation :: TypedSchema Education
 schemaEducation = union'
@@ -41,18 +44,20 @@ data Person f = Person
   deriving Generic
   deriving anyclass (FunctorB, ProductB, TraversableB)
 
+deriving instance Show (Person Identity)
+
 
 schemaPerson :: TypedSchema (Person Identity)
 schemaPerson = record schema
  where
   schema :: RecordSchema Person
-  schema = Person (Mandatory "name" string)
-                  (Mandatory "age" int)
-                  (Mandatory "addresses" $ list string)
-                  (Mandatory "relatives" $ list schemaPerson)
+  schema = Person (Required "name" string)
+                  (Required "age" int)
+                  (Required "addresses" $ list string)
+                  (Required "relatives" $ list schemaPerson)
                   (Optional "spouse" schemaPerson)
                   (Optional "religion" schemaReligion)
-                  (Mandatory "education" schemaEducation)
+                  (Required "education" schemaEducation)
 
 enumerate :: (Bounded a, Enum a) => [a]
 enumerate = [minBound ..]
@@ -69,7 +74,7 @@ pepe = Person
   (Identity $ PhD "Computer Science")
 
 laura = pepe { name      = Identity "Laura"
-             , spouse    = Identity Nothing -- lying to break recursion
+             , spouse    = Identity (Just pepe)
              , education = Identity (Degree "English")
              , addresses = Identity ["2 Edward Square"]
              , relatives = Identity []
@@ -79,7 +84,7 @@ paula = Person
   (Identity "paula")
   (Identity 35)
   (Identity ["La Mar 10"])
-  (Identity []) -- to break recursion
+  (Identity [pepe])
   (Identity Nothing)
   (Identity Nothing)
   (Identity $ Degree "Arts")
@@ -146,3 +151,8 @@ pepe = Object
     ]
   )
 -}
+
+-- >>> unpack schemaPerson (pack schemaPerson pepe)-- <interactive>:11:2-45: error:
+--     • No instance for (Show (Person Identity))
+--         arising from a use of ‘print’
+--     • In a stmt of an interactive GHCi command: print it
