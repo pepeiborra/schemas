@@ -27,14 +27,18 @@ module Schemas
   , union
   , union'
   , Alt(..)
-  -- * Functions
-  , finite
+  -- * Functions for working with schemas
+  , Schema(..)
   , theSchema
-  , Schema
+  , finite
+  , isSubtypeOf
+  -- * Functions for packing and unpacking
   , pack
   , unpack
   , UnpackError(..)
-  , isSubtype
+  -- * Functions for working with recursive schemas
+  , finiteValue
+  , finitePack
   )where
 
 import           Control.Lens          hiding (enum)
@@ -153,7 +157,7 @@ data RecordField a where
   Required :: Text -> TypedSchema a -> RecordField a
   Optional  :: Text -> TypedSchema a -> RecordField (Maybe a)
 
--- | Ensures a 'Schema' is finite by enforcing a max depth
+-- | Ensure that a 'Schema' is finite by enforcing a max depth
 finite :: Int -> Schema -> Schema
 finite = go
  where
@@ -165,8 +169,14 @@ finite = go
   go d (Array sc  ) = Array (go d sc)
   go _ other        = other
 
--- | Folds over a record of 'RecordField' things to reconstruct an untyped schema
-theSchema :: TypedSchemaFlex from a -> Schema
+-- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
+finiteValue :: Int -> Schema -> Value -> Value
+finiteValue d sc
+  | Just cast <- finite d sc `isSubtypeOf` sc = cast
+  | otherwise = error "bug in isSubtypeOf"
+
+-- | Extract an untyped schema that can be serialized
+theSchema :: TypedSchema a -> Schema
 theSchema TBool{} = Bool
 theSchema PureSchema{} = Record []
 theSchema TNumber{} = Number
@@ -179,8 +189,12 @@ theSchema (RecordSchema rs _ _) = Record $ bfoldMap ((:[]) . f) rs
     f (Optional  n sc) = (n, theSchema sc, False)
 theSchema (UnionSchema scs _getTag) = Union $ second theSchema <$> scs
 
+-- | Pack a value into a finite representation by enforcing a max depth
+finitePack :: Int -> TypedSchema a -> a -> Value
+finitePack d sc = finiteValue d (theSchema sc) . pack sc
+
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
-pack :: TypedSchemaFlex from a -> from -> Value
+pack :: TypedSchema a -> a -> Value
 pack (TBool _ fromf) b = A.Bool (fromf b)
 pack (TNumber _ fromf) b = A.Number (fromf b)
 pack (TString _ fromf) b = A.String (fromf b)
@@ -238,26 +252,35 @@ unpack = go []
       _ -> Left $ InvalidUnionType it ctx
     go ctx _ _ = Left $ SchemaMismatch ctx
 
--- | `isSubtype sub sup` returns a witness that sub is a subtype of sup, i.e. a cast function
-isSubtype :: Schema -> Schema -> Maybe (Value -> Value)
-isSubtype sub sup = go sup sub
+-- | `sub isSubtypeOf sup` returns a witness that sub is a subtype of sup, i.e. a cast function sub -> sup
+--
+-- > Record [("a", Bool)] `isSubtypeOf` Record []
+--   Just <function>
+-- > Record [("a", Bool)] `isSubtypeOf` Record [("a", Number)]
+--   Nothing
+isSubtypeOf :: Schema -> Schema -> Maybe (Value -> Value)
+isSubtypeOf sub sup = go sup sub
  where
   go (Array a) (Array b) = do
-    f <- isSubtype a b
+    f <- go a b
     pure $ over (_Array . traverse) f
+  go a (Array b) | a == b = Just (A.Array . fromList . (:[]))
+  go (Enum opts) (Enum opts') | all (`elem` opts') opts = Just id
   go (Union opts) (Union opts') = do
     ff <- forM opts $ \(n,sc) -> do
       sc' <- lookup n opts'
-      f <- isSubtype sc sc'
+      f <- go sc sc'
       return $ over (_Object . ix n) f
     return (foldr (.) id ff)
   go (Record opts) (Record opts') = do
     ff <- forM opts $ \(n, sc, req) -> do
       case find (\(n', _, _) -> n == n') opts' of
-        Nothing -> Just $ over (_Object) (Map.delete n)
+        Nothing -> do
+          guard $ not req
+          Just $ over (_Object) (Map.delete n)
         Just (_, sc', req') -> do
-          guard (req || not req')
-          f <- isSubtype sc sc'
+          guard (not req || req')
+          f <- go sc sc'
           Just $ over (_Object . ix n) f
     return (foldr (.) id ff)
   go a b | a == b = pure id
