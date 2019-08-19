@@ -1,16 +1,30 @@
-{-# LANGUAGE DeriveAnyClass    #-}
-{-# LANGUAGE DeriveFunctor     #-}
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE GADTs             #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE TupleSections     #-}
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveFunctor         #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DerivingStrategies    #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE OverloadedLabels      #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE StandaloneDeriving    #-}
+{-# LANGUAGE TupleSections         #-}
 module Schemas
   (
   -- * Schemas
-    TypedSchema
+    Constructor(..)
+  , Field(..)
+  , Schema(..)
+  -- ** functions for working with schemas
+  , schemaSchema
+  , theSchema
+  , finite
+  , isSubtypeOf
+  -- * Typed schemas
+  , TypedSchema
   , TypedSchemaFlex
-  -- * Construction
+  -- ** Construction
   , empty
   , bool
   , double
@@ -27,39 +41,62 @@ module Schemas
   , union
   , union'
   , Alt(..)
-  -- * Functions for working with schemas
-  , Schema(..)
-  , theSchema
-  , finite
-  , isSubtypeOf
-  -- * Functions for packing and unpacking
+  -- * packing and unpacking
   , pack
   , unpack
   , UnpackError(..)
-  -- * Functions for working with recursive schemas
+  -- * working with recursive schemas
   , finiteValue
   , finitePack
   )where
 
-import           Control.Lens          hiding (enum)
+import           Control.Lens         hiding (enum)
 import           Control.Monad
-import           Data.Aeson            (FromJSON, ToJSON, Value)
-import qualified Data.Aeson            as A
+import           Data.Aeson           (Value)
+import qualified Data.Aeson           as A
 import           Data.Aeson.Lens
 import           Data.Barbie
 import           Data.Biapplicative
 import           Data.Either
-import qualified Data.HashMap.Strict   as Map
-import           Data.List             (find)
+import           Data.Generics.Labels ()
+import qualified Data.HashMap.Strict  as Map
+import           Data.List            (find)
 import           Data.Maybe
 import           Data.Scientific
-import           Data.Text             (Text)
-import qualified Data.Text             as T
+import           Data.Text            (Text)
+import qualified Data.Text            as T
 import           Data.Tuple
-import           Data.Vector           (Vector)
-import qualified Data.Vector           as V
+import           Data.Vector          (Vector)
+import qualified Data.Vector          as V
 import           GHC.Exts
-import           GHC.Generics
+import           GHC.Generics         (Generic)
+
+data Field f = Field
+  { name     :: f Text
+  , schema   :: f Schema
+  , required :: f Bool
+  }
+  deriving (Generic)
+  deriving anyclass (FunctorB, ProductB, TraversableB)
+
+deriving instance Eq (Field Identity)
+deriving instance Show (Field Identity)
+
+schemaField :: TypedSchema (Field Identity)
+schemaField = record $ Field (Required "name" text) (Required "schema" schemaSchema) (Required "required" bool)
+
+data Constructor f = Constructor
+  { name   :: f Text
+  , schema :: f Schema
+  }
+  deriving (Generic)
+  deriving anyclass (FunctorB, ProductB, TraversableB)
+
+deriving instance Eq (Constructor Identity)
+deriving instance Show (Constructor Identity)
+
+schemaConstructor :: TypedSchema (Constructor Identity)
+schemaConstructor = record $ Constructor (Required "name" text) (Required "schema" schemaSchema)
 
 data Schema
   = Bool
@@ -67,9 +104,20 @@ data Schema
   | String
   | Array Schema
   | Enum   [Text]
-  | Record [(Text, Schema, Bool)]   -- ^ name, type, required
-  | Union  [(Text, Schema)]
-  deriving (Eq, Generic, Show, ToJSON, FromJSON)
+  | Record [Field Identity]
+  | Union  [Constructor Identity]
+  deriving (Eq, Generic, Show)
+
+schemaSchema :: TypedSchema Schema
+schemaSchema = union'
+  [ Alt "Bool" #_Bool empty
+  , Alt "Number" #_Number empty
+  , Alt "String" #_String empty
+  , Alt "Array" #_Array schemaSchema
+  , Alt "Enum" (#_Enum) (list text)
+  , Alt "Record" #_Record (list schemaField)
+  , Alt "Union" #_Union (list schemaConstructor)
+  ]
 
 -- | TypedSchema is designed to be used with higher-kinded types, Barbie style
 --   Its main addition over 'Schema' is converting from a JSON 'Value'
@@ -164,8 +212,8 @@ finite = go
   go :: Int -> Schema -> Schema
   go 0 (Record _) = Record []
   go d (Record opts) =
-    Record $ map (\(n, sc, opt) -> (n, go (d - 1) sc, opt)) opts
-  go d (Union opts) = Union (second (go d) <$> opts)
+    Record $ map (\(Field n sc opt) -> Field n (go (d - 1) <$> sc) opt) opts
+  go d (Union opts) = Union (over (traverse . #schema . mapped) (go d) opts)
   go d (Array sc  ) = Array (go d sc)
   go _ other        = other
 
@@ -185,9 +233,9 @@ theSchema (TEnum opts  _) = Enum (fst <$> opts)
 theSchema (TArray sc _ _)  = Array (theSchema sc)
 theSchema (RecordSchema rs _ _) = Record $ bfoldMap ((:[]) . f) rs
   where
-    f (Required n sc)  = (n, theSchema sc, True)
-    f (Optional  n sc) = (n, theSchema sc, False)
-theSchema (UnionSchema scs _getTag) = Union $ second theSchema <$> scs
+    f (Required n sc) = Field (pure n) (pure $ theSchema sc) (pure True)
+    f (Optional n sc) = Field (pure n) (pure $ theSchema sc) (pure False)
+theSchema (UnionSchema scs _getTag) = Union [ Constructor (pure n) (pure $ theSchema sc) | (n,sc) <- scs]
 
 -- | Pack a value into a finite representation by enforcing a max depth
 finitePack :: Int -> TypedSchema a -> a -> Value
@@ -267,18 +315,18 @@ isSubtypeOf sub sup = go sup sub
   go a (Array b) | a == b = Just (A.Array . fromList . (:[]))
   go (Enum opts) (Enum opts') | all (`elem` opts') opts = Just id
   go (Union opts) (Union opts') = do
-    ff <- forM opts $ \(n,sc) -> do
-      sc' <- lookup n opts'
+    ff <- forM opts $ \(Constructor (Identity n) (Identity sc)) -> do
+      Constructor _ (Identity sc') <- find ((== Identity n) . view #name) opts'
       f <- go sc sc'
       return $ over (_Object . ix n) f
     return (foldr (.) id ff)
   go (Record opts) (Record opts') = do
-    ff <- forM opts $ \(n, sc, req) -> do
-      case find (\(n', _, _) -> n == n') opts' of
+    ff <- forM opts $ \(Field (Identity n) (Identity sc) (Identity req)) -> do
+      case find ((== Identity n) . view #name) opts' of
         Nothing -> do
           guard $ not req
           Just $ over (_Object) (Map.delete n)
-        Just (_, sc', req') -> do
+        Just (Field _ (Identity sc') (Identity req')) -> do
           guard (not req || req')
           f <- go sc sc'
           Just $ over (_Object . ix n) f
