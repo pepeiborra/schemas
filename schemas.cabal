@@ -35,6 +35,7 @@ library
 
 executable example
   default-language:    Haskell2010
+  default-extensions:  TypeApplications
   hs-source-dirs:      example
   main-is:             Person.hs
   other-modules:       Person2, Person3

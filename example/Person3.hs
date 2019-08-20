@@ -32,17 +32,15 @@ data Person3 f = Person3
 
 deriving instance Show (Person3 Identity)
 
-schemaPerson3 :: TypedSchema (Person3 Identity)
-schemaPerson3 = record schema
- where
-  schema :: RecordSchema Person3
-  schema = Person3 (Required "name" string)
-                  (Required "age" int)
-                  (Required "addresses" $ list string)
-                  (Required "relatives" $ list schemaPerson3)
-                  (Optional "spouse" schemaPerson3)
-                  (Optional "religion" schemaReligion)
-                  (Required "education" schemaEducation)
+instance HasSchema (Person3 Identity) where
+  schema = record
+          $ Person3 (required "name")
+                    (required "age")
+                    (required "addresses")
+                    (required "relatives")
+                    (optional "spouse")
+                    (optional "religion")
+                    (required "education")
 
 laura3, paula3, pepe3 :: Person3 Identity
 
@@ -57,13 +55,13 @@ pepe3 = Person3
   (Identity $ PhD "Computer Science")
 
 -- laura3 has a cycle with pepe3
-laura3 = pepe3 { name      = Identity "Laura"
-             , spouse    = Identity (Just pepe3)
-             , education = Identity (Degree "English")
-             , addresses = Identity ["2 Edward Square"]
-             , relatives = Identity []
-             , religion  = Identity (Just Catholic)
-             }
+laura3 = pepe3  { name      = Identity "Laura"
+                , spouse    = Identity (Just pepe3)
+                , education = Identity (Degree "English")
+                , addresses = Identity ["2 Edward Square"]
+                , relatives = Identity []
+                , religion  = Identity (Just Catholic)
+                }
 
 -- paula3 has a cycle with pepe3
 paula3 = Person3
@@ -76,14 +74,15 @@ paula3 = Person3
   (Identity $ Degree "Arts")
 
 -- >>> import           Text.Pretty.Simple
--- >>> pPrintNoColor $ finitePack 2 schemaPerson3 laura3
+-- >>> pPrintNoColor $ finiteEncode 2 laura3
+-- *** Exception: stack overflow
 
 -- >>> import           Text.Pretty.Simple
--- >>> pPrintNoColor $ finitePack 2 schemaPerson3 pepe3
+-- >>> pPrintNoColor $ finiteEncode 2 pepe3
 
 -- Unpacking infinite data is not supported currently
 -- >>> import           Text.Pretty.Simple
--- >>> pPrintNoColor $ unpack schemaPerson3 (finitePack 2 schemaPerson3 pepe3)
+-- >>> pPrintNoColor $ unpack (finiteEncode 2 pepe3)
 -- Left
 --     ( MissingRecordField
 --         { name = "name"

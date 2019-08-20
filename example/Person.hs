@@ -18,12 +18,12 @@ import           Schemas
 data Education = NoEducation | Degree {unDegree :: String} | PhD {unPhD :: String}
   deriving (Generic, Show)
 
-schemaEducation :: TypedSchema Education
-schemaEducation = union'
-  [Alt "NoEducation" #_NoEducation empty
-  ,Alt "PhD" #_PhD string
-  ,Alt "Degree" #_Degree string
-  ]
+instance HasSchema Education where
+  schema = union'
+    [alt "NoEducation" #_NoEducation
+    ,alt "PhD" #_PhD
+    ,alt "Degree" #_Degree
+    ]
 
 data Person f = Person
   { name      :: f String
@@ -36,17 +36,12 @@ data Person f = Person
 
 deriving instance Show (Person Identity)
 
-schemaPerson :: TypedSchema (Person Identity)
-schemaPerson = record schema
- where
-  schema :: RecordSchema Person
-  schema = Person (Required "name" string)
-                  (Required "age" int)
-                  (Required "addresses" $ list string)
-                  (Required "education" schemaEducation)
-
-enumerate :: (Bounded a, Enum a) => [a]
-enumerate = [minBound ..]
+instance HasSchema (Person Identity) where
+  schema = record
+         $ Person (required "name")
+                  (required "age")
+                  (required "addresses")
+                  (required "education")
 
 laura, paula, pepe :: Person Identity
 
@@ -66,17 +61,15 @@ paula = Person
   (Identity ["La Mar 10"])
   (Identity $ Degree "Arts")
 
--- >>> import Data.Aeson
--- >>> encode $ pack schemaPerson laura
+-- >>> import qualified Data.Aeson as A
+-- >>> A.encode $ encode schemaPerson laura
 -- "{\"education\":{\"Degree\":\"English\"},\"addresses\":[\"2 Edward Square\"],\"age\":38,\"name\":\"Laura\"}"
 
--- >>> encode $ pack schemaPerson pepe
--- <interactive>:15:2-7: error:
---     Variable not in scope:
---       encode :: aeson-1.4.2.0:Data.Aeson.Types.Internal.Value -> t
+-- >>> import qualified Data.Aeson as A
+-- >>> A.encode $ encode pepe
 
 -- >>> import Text.Pretty.Simple
--- >>> pPrintNoColor $ unpack schemaPerson $ pack schemaPerson pepe
+-- >>> pPrintNoColor $ decode schemaPerson $ encode schemaPerson pepe
 -- Right
 --     ( Person
 --         { name = Identity "Pepe"

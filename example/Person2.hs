@@ -7,9 +7,11 @@
 {-# LANGUAGE OverloadedLists       #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE StandaloneDeriving    #-}
+{-# LANGUAGE TypeApplications      #-}
 
 module Person2 where
 
+import           Data.Aeson (Value)
 import           Data.Barbie
 import           Data.Functor.Identity
 import           Data.Generics.Labels  ()
@@ -32,18 +34,19 @@ data Person2 f = Person2
 data Religion = Catholic | Anglican | Muslim | Hindu
   deriving (Bounded, Enum, Eq, Show)
 
-schemaReligion :: TypedSchema Religion
-schemaReligion = enum (fromString . show) enumerate
+instance HasSchema Religion where
+  schema = enum (fromString . show) enumerate
 
-schemaPerson2 :: TypedSchema (Person2 Identity)
-schemaPerson2 = record schema
- where
-  schema :: RecordSchema Person2
-  schema = Person2 (Required "name" string)
-                  (Required "age" int)
-                  (Required "addresses" $ list string)
-                  (Optional "religion" schemaReligion)
-                  (Required "education" schemaEducation)
+enumerate :: (Bounded a, Enum a) => [a]
+enumerate = [minBound ..]
+
+instance HasSchema (Person2 Identity) where
+  schema = record $
+            Person2 (required "name")
+                    (required "age")
+                    (required "addresses")
+                    (optional "religion")
+                    (required "education")
 
 pepe2 :: Person2 Identity
 pepe2 = Person2
@@ -67,17 +70,17 @@ paula2 = Person2
   (Identity Nothing)
   (Identity $ Degree "Arts")
 
--- Person2 is a subtype of Person therefore we can pack a Person2 as a Person
--- >>> Just castPerson21 = theSchema schemaPerson2 `isSubtypeOf` theSchema schemaPerson
--- >>> import Data.Aeson
--- >>> encode (castPerson21 $ pack schemaPerson2 pepe2)
+-- Person2 is a subtype of Person therefore we can encode a Person2 as a Person
+-- >>> coerce21 = coerce @(Person2 Identity) @(Person Identity)
+-- >>> import qualified Data.Aeson as A
+-- >>> A.encode $ coerce21 $ encode pepe2
 -- "{\"education\":{\"PhD\":\"Computer Science\"},\"addresses\":[\"2 Edward Square\",\"La Mar 10\"],\"age\":38,\"name\":\"Pepe\"}"
 
 
--- We can also unpack a Person from a Person2
--- >>> Just castPerson21 = theSchema schemaPerson2 `isSubtypeOf` theSchema schemaPerson
+-- We can also upgrade a Person into a Person2, because the new field is optional
 -- >>> import Text.Pretty.Simple
--- >>> pPrintNoColor $ unpack schemaPerson (castPerson21 $ pack schemaPerson2 pepe2)
+-- >>> coerce12 = coerce @(Person Identity) @(Person2 Identity)
+-- >>> pPrintNoColor $ decode @(Person Identity) (coerce12 $ encode pepe)
 -- Right
 --     ( Person
 --         { name = Identity "Pepe"
@@ -91,18 +94,3 @@ paula2 = Person2
 --         }
 --     )
 
--- Unpacking a subtype doesn't even need casting
--- >>> import Text.Pretty.Simple
--- >>> pPrintNoColor $ unpack schemaPerson (pack schemaPerson2 pepe2)
--- Right
---     ( Person
---         { name = Identity "Pepe"
---         , age = Identity 38
---         , addresses = Identity
---             [ "2 Edward Square"
---             , "La Mar 10"
---             ]
---         , education = Identity
---             ( PhD { unPhD = "Computer Science" } )
---         }
---     )
