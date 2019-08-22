@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
 module SchemasSpec where
 
@@ -23,26 +24,26 @@ spec :: Spec
 spec = do
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
-      Record [field "a" Number True ] `shouldBeSubtypeOf` Record []
-      Record [field "a" Number False] `shouldBeSubtypeOf` Record []
+      Record [field "a" Number True , field "def" Number True] `shouldBeSubtypeOf` Record [field "def" Number True]
+      Record [field "a" Number False, field "def" Number True] `shouldBeSubtypeOf` Record [field "def" Number True]
     it "subtypes cannot turn a Required field into Optional" $ do
       Record [field "a"  Number  False] `shouldNotBeSubtypeOf` Record [field "a" Number True ]
     it "subtypes can turn an Optional field into Required" $ do
       Record [field "a"  Number  True] `shouldBeSubtypeOf` Record [field "a" Number False]
     it "subtypes can relax the type of a field" $ do
-      Record [field "a"  Number  True] `shouldBeSubtypeOf` Record [field "a" (Array Number) True]
+      Record [field "a"  (Array Number)  True] `shouldBeSubtypeOf` Record [field "a" Number True]
     it "subtypes cannot remove Required fields" $ do
-      Record [] `shouldNotBeSubtypeOf` Record [field "a" Number True ]
+      Record [field "def" Number True] `shouldNotBeSubtypeOf` Record [field "def" Number True, field "a" Number True ]
     it "subtypes can remove Optional fields" $ do
-      Record [] `shouldBeSubtypeOf` Record [field "a" Number False]
+      Record [field "def" Number True] `shouldBeSubtypeOf` Record [field "def" Number True, field "a" Number False]
     it "subtypes can add enum choices" $ do
-      Enum ["A"] `shouldBeSubtypeOf` Enum []
+      Enum ["A", "def"] `shouldBeSubtypeOf` Enum ["def"]
     it "subtypes cannot remove enum choices" $ do
-      Enum [] `shouldNotBeSubtypeOf` Enum ["A"]
+      Enum ["def"] `shouldNotBeSubtypeOf` Enum ["A"]
     it "subtypes can add constructors" $ do
-      Union [constructor "A" String] `shouldBeSubtypeOf` Union []
+      Union [constructor "A" (Just String), constructor "def" Nothing] `shouldBeSubtypeOf` Union [constructor "def" Nothing]
     it "subtypes cannot remove constructors" $ do
-      Union [] `shouldNotBeSubtypeOf` Union [constructor "A" String]
+      Union [constructor "def" Nothing] `shouldNotBeSubtypeOf` Union [constructor "A" (Just String)]
     it "subtypes can expand an array" $ do
       Array String `shouldBeSubtypeOf` String
     it "subtypes cannot drop an array" $ do

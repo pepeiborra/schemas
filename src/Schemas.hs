@@ -7,11 +7,11 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE OverloadedLabels      #-}
+{-# LANGUAGE OverloadedLists       #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TupleSections         #-}
 module Schemas
   (
@@ -52,7 +52,7 @@ module Schemas
   , finiteEncode
   )where
 
-import           Control.Lens         hiding (enum)
+import           Control.Lens         hiding (Empty, enum)
 import           Control.Monad
 import           Data.Aeson           (Value)
 import qualified Data.Aeson           as A
@@ -63,6 +63,8 @@ import           Data.Either
 import           Data.Generics.Labels ()
 import qualified Data.HashMap.Strict  as Map
 import           Data.List            (find)
+import           Data.List.NonEmpty   (NonEmpty(..), nonEmpty)
+import qualified Data.List.NonEmpty   as NE
 import           Data.Maybe
 import           Data.Scientific
 import           Data.Text            (Text)
@@ -72,6 +74,10 @@ import           Data.Vector          (Vector)
 import qualified Data.Vector          as V
 import           GHC.Exts             (fromList)
 import           GHC.Generics         (Generic)
+import           Prelude hiding (lookup)
+
+-- Schemas
+-- --------------------------------------------------------------------------------
 
 data Field f = Field
   { name     :: f Text
@@ -89,7 +95,7 @@ instance HasSchema (Field Identity) where
 
 data Constructor f = Constructor
   { name   :: f Text
-  , schema :: f Schema
+  , schema :: f (Maybe Schema)
   }
   deriving (Generic)
   deriving anyclass (FunctorB, ProductB, TraversableB)
@@ -98,28 +104,21 @@ deriving instance Eq (Constructor Identity)
 deriving instance Show (Constructor Identity)
 
 instance HasSchema (Constructor Identity) where
-  schema = record $ Constructor (required "name") (required "schema")
+  schema = record $ Constructor (required "name") (optional "schema")
 
 data Schema
-  = Bool
+  = Empty
+  | Bool
   | Number
   | String
   | Array Schema
-  | Enum   [Text]
-  | Record [Field Identity]
-  | Union  [Constructor Identity]
+  | Enum   (NonEmpty Text)
+  | Record (NonEmpty (Field Identity))
+  | Union  (NonEmpty (Constructor Identity))
   deriving (Eq, Generic, Show)
 
-instance HasSchema Schema where
-  schema = union'
-    [ alt "Bool" #_Bool
-    , alt "Number" #_Number
-    , alt "String" #_String
-    , alt "Array" #_Array
-    , alt "Enum" #_Enum
-    , alt "Record" #_Record
-    , alt "Union" #_Union
-    ]
+-- Typed schemas
+-- --------------------------------------------------------------------------------
 
 -- | TypedSchema is designed to be used with higher-kinded types, Barbie style
 --   Its main addition over 'Schema' is converting from a JSON 'Value'
@@ -127,12 +126,12 @@ data TypedSchemaFlex from a where
   TBool :: (Bool -> a) -> (from -> Bool) -> TypedSchemaFlex from a
   TNumber :: (Scientific -> a) -> (from -> Scientific) -> TypedSchemaFlex from a
   TString :: (Text -> a) ->  (from -> Text) -> TypedSchemaFlex from a
-  TEnum   :: [(Text, a)] -> (from -> Text) -> TypedSchemaFlex from a
+  TEnum   :: (NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlex from a
   TArray :: TypedSchema b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
   PureSchema :: a -> TypedSchemaFlex from a
   RecordSchema :: (ProductB f, TraversableB f) =>
                   RecordSchema f -> (f Identity -> a) -> (from -> f Identity) -> TypedSchemaFlex from a
-  UnionSchema :: [(Text, TypedSchemaFlex from a)] -> (from -> Text) -> TypedSchemaFlex from a
+  UnionSchema :: (NonEmpty (Text, TypedSchemaFlex from a)) -> (from -> Text) -> TypedSchemaFlex from a
 
 type TypedSchema a = TypedSchemaFlex a a
 type RecordSchema f = f RecordField
@@ -167,36 +166,30 @@ instance {-# OVERLAPPABLE #-} HasSchema a => HasSchema [a] where
 instance HasSchema a => HasSchema (Vector a) where
   schema = TArray schema id id
 
-record :: (ProductB f, TraversableB f) => RecordSchema f -> TypedSchema (f Identity)
-record sc = RecordSchema sc id id
+instance  HasSchema a => HasSchema (NonEmpty a) where
+  schema = TArray schema (NE.fromList . V.toList) (V.fromList . NE.toList)
 
-enum :: Eq a => (a -> Text) -> [a] -> TypedSchema a
+instance HasSchema Schema where
+  schema = union'
+    [ alt "Bool" #_Bool
+    , alt "Number" #_Number
+    , alt "String" #_String
+    , alt "Array" #_Array
+    , alt "Enum" #_Enum
+    , alt "Record" #_Record
+    , alt "Union" #_Union
+    , alt "Empty" #_Empty
+    ]
+
+enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
 enum showF opts = TEnum alts (fromMaybe (error "invalid alt") . flip lookup altMap)
  where
-  altMap = map swap $ alts --TODO fast lookup
-  alts   = [ (showF x, x) | x <- opts ]
+  altMap = fmap swap $ alts --TODO fast lookup
+  alts   = opts <&> \x -> (showF x, x)
 
 empty :: TypedSchema ()
 empty = PureSchema ()
 
-union :: [(Text, TypedSchema a, a -> Bool)] -> TypedSchema a
-union args = UnionSchema constructors fromF
- where
-  constructors = [ (c, sc) | (c, sc, _) <- args ]
-  fromF x = fromMaybe (error $ "invalid constructor")
-    $ listToMaybe [ c | (c, _, p) <- args, p x ]
-
-data Alt from where
-  Alt :: Text -> Prism' from b -> TypedSchema b -> Alt from
-
-alt :: HasSchema a => Text -> Prism' from a -> Alt from
-alt n p = Alt n p schema
-
-union' :: [Alt from] -> TypedSchema from
-union' args = union
-  [ withPrism p $ \t f ->
-      (c, dimap (either (error "impossible") id . f) t sc, isRight . f)
-  | Alt c p sc <- args]
 
 instance Functor (TypedSchemaFlex from) where
   fmap = rmap
@@ -211,7 +204,14 @@ instance Profunctor TypedSchemaFlex where
   dimap g f (RecordSchema sc tof fromf  ) = RecordSchema sc (f . tof) (fromf . g)
   dimap g f (UnionSchema tags       getTag) = UnionSchema (second (dimap g f) <$> tags) (getTag . g)
 
+-- --------------------------------------------------------------------------------
+-- Typed Records
+
 -- | Annotates a typed schema with a field name
+
+record :: (ProductB f, TraversableB f) => RecordSchema f -> TypedSchema (f Identity)
+record sc = RecordSchema sc id id
+
 data RecordField a where
   Required :: Text -> TypedSchema a -> RecordField a
   Optional  :: Text -> TypedSchema a -> RecordField (Maybe a)
@@ -222,50 +222,79 @@ required n = Required n schema
 optional :: HasSchema a => Text -> RecordField (Maybe a)
 optional n = Optional n schema
 
--- | Ensure that a 'Schema' is finite by enforcing a max depth
+-- --------------------------------------------------------------------------------
+-- Typed Unions
+
+union :: (NonEmpty (Text, TypedSchema a, a -> Bool)) -> TypedSchema a
+union args = UnionSchema constructors fromF
+ where
+  constructors = args <&> \(c, sc, _) -> (c, sc)
+  fromF x = maybe (error $ "invalid constructor") (view _1)
+    $ find (\(_, _, p) -> p x) args
+
+data Alt from where
+  Alt :: Text -> Prism' from b -> TypedSchema b -> Alt from
+
+alt :: HasSchema a => Text -> Prism' from a -> Alt from
+alt n p = Alt n p schema
+
+union' :: (NonEmpty (Alt from)) -> TypedSchema from
+union' args = union $ args <&> \(Alt c p sc) ->
+    withPrism p $ \t f ->
+      (c, dimap (either (error "impossible") id . f) t sc, isRight . f)
+
+-- --------------------------------------------------------------------------------
+-- Finite schemas
+
+-- | Ensure that a 'Schema' is finite by enforcing a max depth.
+--   The result is guaranteed to be a subtype of the input.
 finite :: Int -> Schema -> Schema
 finite = go
  where
   go :: Int -> Schema -> Schema
-  go 0 (Record _) = Record []
+  go 0 (Record _) = Empty
+  go 0 (Array _) = Empty
+  go 0 (Union _) = Empty
   go d (Record opts) =
-    Record $ map (\(Field n sc opt) -> Field n (go (d - 1) <$> sc) opt) opts
-  go d (Union opts) = Union (over (traverse . #schema . mapped) (go d) opts)
-  go d (Array sc  ) = Array (go d sc)
+    Record $ fmap (\(Field n sc opt) -> Field n (go (d - 1) <$> sc) opt) opts
+  go d (Union opts) = Union (over (traverse . #schema . mapped . mapped) (go (d-1)) opts)
+  go d (Array sc  ) = Array (go (d-1) sc)
   go _ other        = other
 
 -- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
 finiteValue :: Int -> Schema -> Value -> Value
 finiteValue d sc
-  | Just cast <- sc `isSubtypeOf` finite d sc = cast
+  | Just cast <- finite d sc `isSubtypeOf` sc = cast
   | otherwise = error "bug in isSubtypeOf"
+
+-- --------------------------------------------------------------------------------
+-- Schema extraction from a TypedSchema
 
 -- | Extract an untyped schema that can be serialized
 extractSchema :: TypedSchema a -> Schema
 extractSchema TBool{} = Bool
-extractSchema PureSchema{} = Record []
+extractSchema PureSchema{} = Empty
 extractSchema TNumber{} = Number
 extractSchema TString{} = String
 extractSchema (TEnum opts  _) = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array (extractSchema sc)
-extractSchema (RecordSchema rs _ _) = Record $ bfoldMap ((:[]) . f) rs
+extractSchema (RecordSchema rs _ _) = maybe Empty Record $ nonEmpty $ bfoldMap ((:[]) . f) rs
   where
     f (Required n sc) = Field (pure n) (pure $ extractSchema sc) (pure True)
     f (Optional n sc) = Field (pure n) (pure $ extractSchema sc) (pure False)
-extractSchema (UnionSchema scs _getTag) = Union [ Constructor (pure n) (pure $ extractSchema sc) | (n,sc) <- scs]
+extractSchema (UnionSchema scs _getTag) = Union $ scs <&> \(n, sc) ->
+  Constructor
+    (pure n)
+    (pure $ case extractSchema sc of
+      Empty -> Nothing
+      x     -> Just x
+    )
 
 theSchema :: forall a . HasSchema a => Schema
 theSchema = extractSchema (schema @a)
 
--- | Throws an error if 'sub' is not a subtype of 'sup'
-coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Value
-coerce = case isSubtypeOf (theSchema @sub) (theSchema @sup) of
-  Just cast -> cast
-  Nothing -> error "Not a subtype"
-
--- | Encode a value into a finite representation by enforcing a max depth
-finiteEncode :: forall a. HasSchema a => Int -> a -> Value
-finiteEncode d = finiteValue d (theSchema @a) . encode
+-- ---------------------------------------------------------------------------------------
+-- Encoding
 
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchema a -> a -> Value
@@ -294,10 +323,17 @@ encodeWith (UnionSchema opts fromF) x =
 encode :: HasSchema a => a -> Value
 encode = encodeWith schema
 
+-- | Encode a value into a finite representation by enforcing a max depth
+finiteEncode :: forall a. HasSchema a => Int -> a -> Value
+finiteEncode d = finiteValue d (theSchema @a) . encode
+
+-- --------------------------------------------------------------------------
+-- Decoding
+
 data DecodeError
   = InvalidRecordField { name :: Text, context :: [Text]}
   | MissingRecordField { name :: Text, context :: [Text]}
-  | InvalidEnumValue { given :: Text, options, context :: [Text]}
+  | InvalidEnumValue { given :: Text, options :: NonEmpty Text, context :: [Text]}
   | InvalidConstructor { name :: Text, context :: [Text]}
   | InvalidUnionType { contents :: Value, context :: [Text]}
   | SchemaMismatch {context :: [Text]}
@@ -333,6 +369,9 @@ decodeWith = go []
 decode :: HasSchema a => Value -> Either DecodeError a
 decode = decodeWith schema
 
+-- ------------------------------------------------------------------------------------------------------
+-- Subtype relation
+
 -- | `sub isSubtypeOf sup` returns a witness that sub is a subset of sup, i.e. a cast function sub -> sup
 --
 -- > Record [("a", Bool)] `isSubtypeOf` Record []
@@ -342,6 +381,9 @@ decode = decodeWith schema
 isSubtypeOf :: Schema -> Schema -> Maybe (Value -> Value)
 isSubtypeOf sub sup = go sup sub
  where
+  go (Array _)  Empty = pure $ const (A.Array [])
+  go (Union _)  Empty = pure $ const (A.Object $ fromList [])
+  go (Record _) Empty = pure $ const (A.Object $ fromList [])
   go (Array a) (Array b) = do
     f <- go a b
     pure $ over (_Array . traverse) f
@@ -350,20 +392,51 @@ isSubtypeOf sub sup = go sup sub
   go (Union opts) (Union opts') = do
     ff <- forM opts $ \(Constructor (Identity n) (Identity sc)) -> do
       Constructor _ (Identity sc') <- find ((== Identity n) . view #name) opts'
-      f <- go sc sc'
-      return $ over (_Object . ix n) f
+      case (sc,sc') of
+        (Nothing, Nothing) -> return id
+        (Just sc, Just sc') -> do
+          f <- go sc sc'
+          return $ over (_Object . ix n) f
+        _ -> Nothing
     return (foldr (.) id ff)
   go (Record opts) (Record opts') = do
     forM_ opts $ \(Field n _ (Identity req)) ->
       guard $ not req || isJust (find ((== n) . view #name) opts')
-    ff <- forM opts' $ \(Field (Identity n) (Identity sc) (Identity req)) -> do
-      case find ((== Identity n) . view #name) opts of
+    ff <- forM opts' $ \(Field (Identity n') (Identity sc') (Identity req')) -> do
+      case find ((== Identity n') . view #name) opts of
         Nothing -> do
-          Just $ over (_Object) (Map.delete n)
-        Just (Field _ (Identity sc') (Identity req')) -> do
-          guard (not req' || req)
+          Just $ over (_Object) (Map.delete n')
+        Just (Field _ (Identity sc) (Identity req)) -> do
+          guard (not req || req')
           f <- go sc sc'
-          Just $ over (_Object . ix n) f
+          Just $ over (_Object . ix n') f
     return (foldr (.) id ff)
   go a b | a == b = pure id
-  go _ _          = Nothing
+  go a b          = a `seq` b `seq` Nothing
+
+-- | Returns 'Nothing' if 'sub' is not a subtype of 'sup'
+coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
+coerce = case isSubtypeOf (theSchema @sub) (theSchema @sup) of
+  Just cast -> Just . cast
+  Nothing -> const Nothing
+
+-- ----------------------------------------------
+-- Utils
+
+-- | Generalized lookup for Foldables
+lookup :: (Eq a, Foldable f) => a -> f (a,b) -> Maybe b
+lookup a = fmap snd . find ((== a) . fst)
+
+-- The Schema schema is recursive and cannot be serialized unless we use finiteEncode
+-- >>> import qualified Data.ByteString.Lazy.Char8 as B
+-- >>> B.putStrLn $ A.encode $ finiteEncode 10 (theSchema @Schema)
+-- {"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{"Union":[]},"name":"Array"},{"schema":{"Array":{}},"name":"Enum"},{"schema":{"Array":{}},"name":"Record"},{"schema":{"Array":{}},"name":"Union"},{"name":"Empty"}]},"name":"Array"},{"schema":{"Array":{"String":{}}},"name":"Enum"},{"schema":{"Array":{"Record":[{"required":true,"schema":{},"name":"name"},{"required":true,"schema":{},"name":"schema"},{"required":true,"schema":{},"name":"required"}]}},"name":"Record"},{"schema":{"Array":{"Record":[{"required":true,"schema":{},"name":"name"},{"required":false,"schema":{},"name":"schema"}]}},"name":"Union"},{"name":"Empty"}]},"name":"Array"},{"schema":{"Array":{"String":{}}},"name":"Enum"},{"schema":{"Array":{"Record":[{"required":true,"schema":{"String":{}},"name":"name"},{"required":true,"schema":{"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{},"name":"Array"},{"schema":{},"name":"Enum"},{"schema":{},"name":"Record"},{"schema":{},"name":"Union"},{"name":"Empty"}]},"name":"schema"},{"required":true,"schema":{"Bool":{}},"name":"required"}]}},"name":"Record"},{"schema":{"Array":{"Record":[{"required":true,"schema":{"String":{}},"name":"name"},{"required":false,"schema":{"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{},"name":"Array"},{"schema":{},"name":"Enum"},{"schema":{},"name":"Record"},{"schema":{},"name":"Union"},{"name":"Empty"}]},"name":"schema"}]}},"name":"Union"},{"name":"Empty"}]}
+
+-- Deserializing a value V of a recursive schema S is not supported,
+-- because S is not a subtype of the truncated schema finite(S)
+
+-- >>> isJust $ finite 10 (theSchema @Schema) `isSubtypeOf` theSchema @Schema
+-- True
+-- >>> isJust $ theSchema @Schema `isSubtypeOf` finite 10 (theSchema @Schema)
+-- False
+

@@ -16,12 +16,14 @@ extra-source-files:  CHANGELOG.md
 library
   exposed-modules:
     Schemas
+  default-extensions:  TypeApplications
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.12.0.0
                      , aeson
                      , barbies
                      , bifunctors
+                     , bytestring
                      , generic-lens
                      , lens
                      , lens-aeson
