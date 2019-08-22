@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveFunctor         #-}
@@ -79,33 +80,6 @@ import           Prelude hiding (lookup)
 -- Schemas
 -- --------------------------------------------------------------------------------
 
-data Field f = Field
-  { name     :: f Text
-  , schema   :: f Schema
-  , isRequired :: f Bool
-  }
-  deriving (Generic)
-  deriving anyclass (FunctorB, ProductB, TraversableB)
-
-deriving instance Eq (Field Identity)
-deriving instance Show (Field Identity)
-
-instance HasSchema (Field Identity) where
-  schema = record $ Field (required "name") (required "schema") (required "required")
-
-data Constructor f = Constructor
-  { name   :: f Text
-  , schema :: f (Maybe Schema)
-  }
-  deriving (Generic)
-  deriving anyclass (FunctorB, ProductB, TraversableB)
-
-deriving instance Eq (Constructor Identity)
-deriving instance Show (Constructor Identity)
-
-instance HasSchema (Constructor Identity) where
-  schema = record $ Constructor (required "name") (optional "schema")
-
 data Schema
   = Empty
   | Bool
@@ -116,6 +90,31 @@ data Schema
   | Record (NonEmpty (Field Identity))
   | Union  (NonEmpty (Constructor Identity))
   deriving (Eq, Generic, Show)
+
+data Field f = Field
+  { name     :: f Text
+  , schema   :: f Schema
+  , isRequired :: f (Maybe Bool) -- ^ defaults to True
+  }
+  deriving (Generic)
+  deriving anyclass (FunctorB, ProductB, TraversableB)
+
+isRequiredField :: Field Identity -> Bool
+isRequiredField Field{isRequired = Identity (Just x)} = x
+isRequiredField _ = True
+
+deriving instance Eq (Field Identity)
+deriving instance Show (Field Identity)
+
+data Constructor f = Constructor
+  { name   :: f Text
+  , schema :: f (Maybe Schema)
+  }
+  deriving (Generic)
+  deriving anyclass (FunctorB, ProductB, TraversableB)
+
+deriving instance Eq (Constructor Identity)
+deriving instance Show (Constructor Identity)
 
 -- Typed schemas
 -- --------------------------------------------------------------------------------
@@ -169,6 +168,12 @@ instance HasSchema a => HasSchema (Vector a) where
 instance  HasSchema a => HasSchema (NonEmpty a) where
   schema = TArray schema (NE.fromList . V.toList) (V.fromList . NE.toList)
 
+instance HasSchema (Field Identity) where
+  schema = record $ Field (required "name") (required "schema") (optional "required")
+
+instance HasSchema (Constructor Identity) where
+  schema = record $ Constructor (required "name") (optional "schema")
+
 instance HasSchema Schema where
   schema = union'
     [ alt "Bool" #_Bool
@@ -214,7 +219,7 @@ record sc = RecordSchema sc id id
 
 data RecordField a where
   Required :: Text -> TypedSchema a -> RecordField a
-  Optional  :: Text -> TypedSchema a -> RecordField (Maybe a)
+  Optional :: Text -> TypedSchema a -> RecordField (Maybe a)
 
 required :: HasSchema a => Text -> RecordField a
 required n = Required n schema
@@ -280,8 +285,8 @@ extractSchema (TEnum opts  _) = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array (extractSchema sc)
 extractSchema (RecordSchema rs _ _) = maybe Empty Record $ nonEmpty $ bfoldMap ((:[]) . f) rs
   where
-    f (Required n sc) = Field (pure n) (pure $ extractSchema sc) (pure True)
-    f (Optional n sc) = Field (pure n) (pure $ extractSchema sc) (pure False)
+    f (Required n sc) = Field (pure n) (pure $ extractSchema sc) (pure Nothing)
+    f (Optional n sc) = Field (pure n) (pure $ extractSchema sc) (pure $ Just False)
 extractSchema (UnionSchema scs _getTag) = Union $ scs <&> \(n, sc) ->
   Constructor
     (pure n)
@@ -311,11 +316,13 @@ encodeWith (RecordSchema rs _ fromf) b =
     $ bzipWith f rs (fromf b)
  where
   f :: RecordField a -> Identity a -> Const (Maybe (Text, Value)) a
-  f (Required n sc) x  = Const $ Just (n, encodeWith sc $ runIdentity x)
-  f (Optional  n sc) x = Const $ (n, ) . encodeWith sc <$> runIdentity x
+  f (Required _ (TArray _ _ toArray)) (Identity (toArray -> [])) = Const Nothing
+  f (Required n sc) x = Const $ Just (n, encodeWith sc $ runIdentity x)
+  f (Optional n sc) x = Const $ (n, ) . encodeWith sc <$> runIdentity x
 encodeWith (UnionSchema opts fromF) x =
   case lookup tag opts of
     Nothing -> error $ "Unknown tag: " <> show tag
+    Just PureSchema{} -> A.String tag
     Just sc -> A.object [ tag A..= encodeWith sc x ]
   where tag = fromF x
 
@@ -355,10 +362,15 @@ decodeWith = go []
         f :: RecordField a -> Either DecodeError (Identity a)
         f (Required n sc) = case Map.lookup n fields of
           Just v  -> pure <$> go (n : ctx) sc v
-          Nothing -> Left $ MissingRecordField n ctx
+          Nothing ->
+            case sc of
+              TArray _ tof' _ -> pure $ pure $ tof' []
+              _ ->  Left $ MissingRecordField n ctx
         f (Optional n sc) = case Map.lookup n fields of
           Just v  -> pure . pure <$> go (n : ctx) sc v
           Nothing -> pure $ pure Nothing
+    go _tx (UnionSchema opts _) (A.String n)
+      | Just (PureSchema a) <- lookup n opts = pure a
     go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
       [(n, v)] -> case lookup n opts of
         Just sc -> go (n : ctx) sc v
@@ -394,22 +406,22 @@ isSubtypeOf sub sup = go sup sub
       Constructor _ (Identity sc') <- find ((== Identity n) . view #name) opts'
       case (sc,sc') of
         (Nothing, Nothing) -> return id
-        (Just sc, Just sc') -> do
-          f <- go sc sc'
+        (Just asc, Just asc') -> do
+          f <- go asc asc'
           return $ over (_Object . ix n) f
         _ -> Nothing
     return (foldr (.) id ff)
   go (Record opts) (Record opts') = do
-    forM_ opts $ \(Field n _ (Identity req)) ->
-      guard $ not req || isJust (find ((== n) . view #name) opts')
-    ff <- forM opts' $ \(Field (Identity n') (Identity sc') (Identity req')) -> do
+    forM_ opts $ \f@(Field n _ _) ->
+      guard $ not (isRequiredField f) || isJust (find ((== n) . view #name) opts')
+    ff <- forM opts' $ \f'@(Field (Identity n') (Identity sc') _) -> do
       case find ((== Identity n') . view #name) opts of
         Nothing -> do
           Just $ over (_Object) (Map.delete n')
-        Just (Field _ (Identity sc) (Identity req)) -> do
-          guard (not req || req')
-          f <- go sc sc'
-          Just $ over (_Object . ix n') f
+        Just f@(Field _ (Identity sc) _) -> do
+          guard (not (isRequiredField f)|| isRequiredField f')
+          witness <- go sc sc'
+          Just $ over (_Object . ix n') witness
     return (foldr (.) id ff)
   go a b | a == b = pure id
   go a b          = a `seq` b `seq` Nothing
@@ -428,9 +440,91 @@ lookup :: (Eq a, Foldable f) => a -> f (a,b) -> Maybe b
 lookup a = fmap snd . find ((== a) . fst)
 
 -- The Schema schema is recursive and cannot be serialized unless we use finiteEncode
+-- >>> import Data.Aeson.Encode.Pretty
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
--- >>> B.putStrLn $ A.encode $ finiteEncode 10 (theSchema @Schema)
--- {"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{"Union":[]},"name":"Array"},{"schema":{"Array":{}},"name":"Enum"},{"schema":{"Array":{}},"name":"Record"},{"schema":{"Array":{}},"name":"Union"},{"name":"Empty"}]},"name":"Array"},{"schema":{"Array":{"String":{}}},"name":"Enum"},{"schema":{"Array":{"Record":[{"required":true,"schema":{},"name":"name"},{"required":true,"schema":{},"name":"schema"},{"required":true,"schema":{},"name":"required"}]}},"name":"Record"},{"schema":{"Array":{"Record":[{"required":true,"schema":{},"name":"name"},{"required":false,"schema":{},"name":"schema"}]}},"name":"Union"},{"name":"Empty"}]},"name":"Array"},{"schema":{"Array":{"String":{}}},"name":"Enum"},{"schema":{"Array":{"Record":[{"required":true,"schema":{"String":{}},"name":"name"},{"required":true,"schema":{"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{},"name":"Array"},{"schema":{},"name":"Enum"},{"schema":{},"name":"Record"},{"schema":{},"name":"Union"},{"name":"Empty"}]},"name":"schema"},{"required":true,"schema":{"Bool":{}},"name":"required"}]}},"name":"Record"},{"schema":{"Array":{"Record":[{"required":true,"schema":{"String":{}},"name":"name"},{"required":false,"schema":{"Union":[{"name":"Bool"},{"name":"Number"},{"name":"String"},{"schema":{},"name":"Array"},{"schema":{},"name":"Enum"},{"schema":{},"name":"Record"},{"schema":{},"name":"Union"},{"name":"Empty"}]},"name":"schema"}]}},"name":"Union"},{"name":"Empty"}]}
+-- >>> B.putStrLn $ encodePretty $ finiteEncode 6 (theSchema @Schema)
+-- {
+--     "Union": [
+--         {
+--             "name": "Bool"
+--         },
+--         {
+--             "name": "Number"
+--         },
+--         {
+--             "name": "String"
+--         },
+--         {
+--             "schema": {
+--                 "Union": [
+--                     {
+--                         "name": "Bool"
+--                     },
+--                     {
+--                         "name": "Number"
+--                     },
+--                     {
+--                         "name": "String"
+--                     },
+--                     {
+--                         "schema": {},
+--                         "name": "Array"
+--                     },
+--                     {
+--                         "schema": {},
+--                         "name": "Enum"
+--                     },
+--                     {
+--                         "schema": {},
+--                         "name": "Record"
+--                     },
+--                     {
+--                         "schema": {},
+--                         "name": "Union"
+--                     },
+--                     {
+--                         "name": "Empty"
+--                     }
+--                 ]
+--             },
+--             "name": "Array"
+--         },
+--         {
+--             "schema": {
+--                 "Array": {
+--                     "String": {}
+--                 }
+--             },
+--             "name": "Enum"
+--         },
+--         {
+--             "schema": {
+--                 "Array": {
+--                     "Record": [
+--                         {},
+--                         {},
+--                         {}
+--                     ]
+--                 }
+--             },
+--             "name": "Record"
+--         },
+--         {
+--             "schema": {
+--                 "Array": {
+--                     "Record": [
+--                         {},
+--                         {}
+--                     ]
+--                 }
+--             },
+--             "name": "Union"
+--         },
+--         {
+--             "name": "Empty"
+--         }
+--     ]
+-- }
 
 -- Deserializing a value V of a recursive schema S is not supported,
 -- because S is not a subtype of the truncated schema finite(S)
