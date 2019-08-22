@@ -372,9 +372,9 @@ decode = decodeWith schema
 -- ------------------------------------------------------------------------------------------------------
 -- Subtype relation
 
--- | `sub isSubtypeOf sup` returns a witness that sub is a subset of sup, i.e. a cast function sub -> sup
+-- | @sub isSubtypeOf sup@ returns a witness that @sub@ is a subtype of @sup@, i.e. a cast function @sub -> sup@
 --
--- > Record [("a", Bool)] `isSubtypeOf` Record []
+-- > Array Bool `isSubtypeOf` Bool
 --   Just <function>
 -- > Record [("a", Bool)] `isSubtypeOf` Record [("a", Number)]
 --   Nothing
