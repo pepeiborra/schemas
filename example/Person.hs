@@ -16,7 +16,7 @@ import           GHC.Generics
 import           Schemas
 
 data Education = NoEducation | Degree {unDegree :: String} | PhD {unPhD :: String}
-  deriving (Generic, Show)
+  deriving (Generic, Eq, Show)
 
 instance HasSchema Education where
   schema = union'
@@ -34,6 +34,7 @@ data Person f = Person
   deriving Generic
   deriving anyclass (FunctorB, ProductB, TraversableB)
 
+deriving instance Eq   (Person Identity)
 deriving instance Show (Person Identity)
 
 instance HasSchema (Person Identity) where
@@ -43,7 +44,7 @@ instance HasSchema (Person Identity) where
                   (required "addresses")
                   (required "education")
 
-laura, paula, pepe :: Person Identity
+pepe :: Person Identity
 
 pepe = Person
   (Identity "Pepe")
@@ -51,25 +52,74 @@ pepe = Person
   (Identity ["2 Edward Square", "La Mar 10"])
   (Identity $ PhD "Computer Science")
 
-laura = pepe { name      = Identity "Laura"
-             , education = Identity (Degree "English")
-             , addresses = Identity ["2 Edward Square"]
-             }
-paula = Person
-  (Identity "paula")
-  (Identity 35)
-  (Identity ["La Mar 10"])
-  (Identity $ Degree "Arts")
-
--- >>> import qualified Data.Aeson as A
--- >>> A.encode $ encode schemaPerson laura
--- "{\"education\":{\"Degree\":\"English\"},\"addresses\":[\"2 Edward Square\"],\"age\":38,\"name\":\"Laura\"}"
-
--- >>> import qualified Data.Aeson as A
--- >>> A.encode $ encode pepe
+-- >>> import Data.Aeson.Encode.Pretty
+-- >>> import qualified Data.ByteString.Lazy.Char8 as B
+-- >>> B.putStrLn $ encodePretty $ encode pepe
+-- {
+--     "education": {
+--         "PhD": "Computer Science"
+--     },
+--     "addresses": [
+--         "2 Edward Square",
+--         "La Mar 10"
+--     ],
+--     "age": 38,
+--     "name": "Pepe"
+-- }
+-- >>> B.putStrLn $ encodePretty $ encode (theSchema @(Person Identity))
+-- {
+--     "Record": [
+--         {
+--             "required": true,
+--             "schema": {
+--                 "String": {}
+--             },
+--             "name": "name"
+--         },
+--         {
+--             "required": true,
+--             "schema": {
+--                 "Number": {}
+--             },
+--             "name": "age"
+--         },
+--         {
+--             "required": true,
+--             "schema": {
+--                 "Array": {
+--                     "String": {}
+--                 }
+--             },
+--             "name": "addresses"
+--         },
+--         {
+--             "required": true,
+--             "schema": {
+--                 "Union": [
+--                     {
+--                         "name": "NoEducation"
+--                     },
+--                     {
+--                         "schema": {
+--                             "String": {}
+--                         },
+--                         "name": "PhD"
+--                     },
+--                     {
+--                         "schema": {
+--                             "String": {}
+--                         },
+--                         "name": "Degree"
+--                     }
+--                 ]
+--             },
+--             "name": "education"
+--         }
+--     ]
+-- }
 
 -- >>> import Text.Pretty.Simple
--- >>> pPrintNoColor $ decode schemaPerson $ encode schemaPerson pepe
+-- >>> pPrintNoColor $ decode @(Person Identity) $ encode pepe
 -- Right
 --     ( Person
 --         { name = Identity "Pepe"

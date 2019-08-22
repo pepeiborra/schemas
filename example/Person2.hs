@@ -11,11 +11,11 @@
 
 module Person2 where
 
-import           Data.Aeson (Value)
 import           Data.Barbie
 import           Data.Functor.Identity
 import           Data.Generics.Labels  ()
 import           Data.String
+import           GHC.Exts (IsList(..))
 import           GHC.Generics
 import           Person
 import           Schemas
@@ -35,7 +35,7 @@ data Religion = Catholic | Anglican | Muslim | Hindu
   deriving (Bounded, Enum, Eq, Show)
 
 instance HasSchema Religion where
-  schema = enum (fromString . show) enumerate
+  schema = enum (fromString . show) (fromList enumerate)
 
 enumerate :: (Bounded a, Enum a) => [a]
 enumerate = [minBound ..]
@@ -71,10 +71,21 @@ paula2 = Person2
   (Identity $ Degree "Arts")
 
 -- Person2 is a subtype of Person therefore we can encode a Person2 as a Person
+-- >>> import qualified Data.ByteString.Lazy.Char8 as B
+-- >>> import qualified Data.Aeson.Encode.Pretty
 -- >>> coerce21 = coerce @(Person2 Identity) @(Person Identity)
--- >>> import qualified Data.Aeson as A
--- >>> A.encode $ coerce21 $ encode pepe2
--- "{\"education\":{\"PhD\":\"Computer Science\"},\"addresses\":[\"2 Edward Square\",\"La Mar 10\"],\"age\":38,\"name\":\"Pepe\"}"
+-- >>> B.putStrLn $ encodePretty $ coerce21 $ encode pepe2
+-- {
+--     "education": {
+--         "PhD": "Computer Science"
+--     },
+--     "addresses": [
+--         "2 Edward Square",
+--         "La Mar 10"
+--     ],
+--     "age": 38,
+--     "name": "Pepe"
+-- }
 
 
 -- We can also upgrade a Person into a Person2, because the new field is optional

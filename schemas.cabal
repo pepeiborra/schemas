@@ -16,11 +16,11 @@ extra-source-files:  CHANGELOG.md
 library
   exposed-modules:
     Schemas
-  default-extensions:  TypeApplications
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.12.0.0
                      , aeson
+                     , aeson-pretty
                      , barbies
                      , bifunctors
                      , bytestring
@@ -34,19 +34,24 @@ library
                      , vector
   hs-source-dirs:      src
   default-language:    Haskell2010
-
-executable example
-  default-language:    Haskell2010
   default-extensions:  TypeApplications
-  hs-source-dirs:      example
-  main-is:             Person.hs
-  other-modules:       Person2, Person3
-  build-depends:       aeson, barbies, base, schemas, generic-lens, pretty-simple
 
 test-suite spec
   default-language:    Haskell2010
+  default-extensions:  TypeApplications
   type:                exitcode-stdio-1.0
-  hs-source-dirs:      test
+  hs-source-dirs:      example, test
   main-is:             Main.hs
-  other-modules:       SchemasSpec
-  build-depends:       aeson, barbies, base, schemas, generic-lens, hspec
+  other-modules:       Person
+                     , Person2
+                     , Person3
+                     , SchemasSpec
+  build-depends:       aeson
+                     , aeson-pretty
+                     , barbies
+                     , base
+                     , bytestring
+                     , generic-lens
+                     , hspec
+                     , pretty-simple
+                     , schemas

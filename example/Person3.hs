@@ -17,12 +17,11 @@ import           Person
 import           Person2
 import           Schemas
 
--- | v3 adds recursive fields 'relatives' and 'spouse', which can lead to cycles
+-- | v3 adds recursive field 'spouse', which leads to cycles
 data Person3 f = Person3
   { name      :: f String
   , age       :: f Int
   , addresses :: f [String]
-  , relatives :: f [Person3 Identity]
   , spouse    :: f (Maybe (Person3 Identity))
   , religion  :: f (Maybe Religion)
   , education :: f Education
@@ -37,19 +36,17 @@ instance HasSchema (Person3 Identity) where
           $ Person3 (required "name")
                     (required "age")
                     (required "addresses")
-                    (required "relatives")
                     (optional "spouse")
                     (optional "religion")
                     (required "education")
 
-laura3, paula3, pepe3 :: Person3 Identity
+laura3, pepe3 :: Person3 Identity
 
--- pepe3 has cycles with laura3 and paula3
+-- pepe3 has a cycle with laura3
 pepe3 = Person3
   (Identity "Pepe")
   (Identity 38)
   (Identity ["2 Edward Square", "La Mar 10"])
-  (Identity [paula3])
   (Identity $ Just laura3)
   (Identity Nothing)
   (Identity $ PhD "Computer Science")
@@ -59,38 +56,31 @@ laura3 = pepe3  { name      = Identity "Laura"
                 , spouse    = Identity (Just pepe3)
                 , education = Identity (Degree "English")
                 , addresses = Identity ["2 Edward Square"]
-                , relatives = Identity []
                 , religion  = Identity (Just Catholic)
                 }
 
--- paula3 has a cycle with pepe3
-paula3 = Person3
-  (Identity "Paula")
-  (Identity 35)
-  (Identity ["La Mar 10"])
-  (Identity [pepe3])
-  (Identity Nothing)
-  (Identity Nothing)
-  (Identity $ Degree "Arts")
-
--- >>> import           Text.Pretty.Simple
--- >>> pPrintNoColor $ finiteEncode 2 laura3
--- *** Exception: stack overflow
-
--- >>> import           Text.Pretty.Simple
--- >>> pPrintNoColor $ finiteEncode 2 pepe3
+-- >>> import qualified Data.ByteString.Lazy.Char8 as B
+-- >>> import Data.Aeson.Encode.Pretty
+-- >>> B.putStrLn $ encodePretty $ finiteEncode 2 laura3
+-- {
+--     "spouse": {
+--         "spouse": {},
+--         "education": {},
+--         "addresses": [],
+--         "age": 38,
+--         "name": "Pepe"
+--     },
+--     "education": {
+--         "Degree": "English"
+--     },
+--     "religion": "Catholic",
+--     "addresses": [
+--         "2 Edward Square"
+--     ],
+--     "age": 38,
+--     "name": "Laura"
+-- }
 
 -- Unpacking infinite data is not supported currently
--- >>> import           Text.Pretty.Simple
--- >>> pPrintNoColor $ unpack (finiteEncode 2 pepe3)
--- Left
---     ( MissingRecordField
---         { name = "name"
---         , context =
---             [ "[]"
---             , "relatives"
---             , "[]"
---             , "relatives"
---             ]
---         }
---     )
+-- >>> decode @(Person3 Identity) (finiteEncode 2 pepe3)
+-- Left (MissingRecordField {name = "name", context = ["spouse","spouse"]})

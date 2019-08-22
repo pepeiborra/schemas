@@ -1,24 +1,19 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
 module SchemasSpec where
 
+import Control.Exception
+import qualified Data.Aeson as A
 import Data.Functor.Identity
+import Data.Maybe
+import Person
+import Person2
+import Person3
 import Schemas
+import System.Timeout
 import Test.Hspec
-
-shouldBeSubtypeOf :: Schema -> Schema -> Expectation
-shouldBeSubtypeOf a b = case a `isSubtypeOf` b of
-  Just _ -> pure ()
-  Nothing -> expectationFailure $ show a <> " should be a subtype of " <> show b
-
-shouldNotBeSubtypeOf :: Schema -> Schema -> Expectation
-shouldNotBeSubtypeOf a b = case a `isSubtypeOf` b of
-  Just _  -> expectationFailure $ show a <> " should not be a subtype of " <> show b
-  Nothing -> pure ()
-
-field n t req = Field (Identity n) (Identity t) (Identity req)
-
-constructor n t = Constructor (Identity n) (Identity t)
+import Text.Show.Functions ()
 
 spec :: Spec
 spec = do
@@ -48,3 +43,32 @@ spec = do
       Array String `shouldBeSubtypeOf` String
     it "subtypes cannot drop an array" $ do
       String `shouldNotBeSubtypeOf` Array String
+  describe "examples" $ do
+    describe "Person"  $ do
+      it "decode is the inverse of encode" $ do
+        decode (encode pepe) `shouldBe` Right pepe
+    describe "Person2" $ do
+      it "Person2 is a subtype of Person" $ do
+        theSchema @(Person2 Identity) `isSubtypeOf` theSchema @(Person Identity) `shouldSatisfy` isJust
+      it "Person is a subtype of Person2" $ do
+        theSchema @(Person Identity) `isSubtypeOf` theSchema @(Person2 Identity) `shouldSatisfy` isJust
+    describe "Person3" $ do
+      it "finiteEncode works as expected" $
+        shouldNotLoop $ evaluate $ A.encode(finiteEncode 2 laura3)
+
+shouldBeSubtypeOf :: Schema -> Schema -> Expectation
+shouldBeSubtypeOf a b = case a `isSubtypeOf` b of
+  Just _ -> pure ()
+  Nothing -> expectationFailure $ show a <> " should be a subtype of " <> show b
+
+shouldNotBeSubtypeOf :: Schema -> Schema -> Expectation
+shouldNotBeSubtypeOf a b = case a `isSubtypeOf` b of
+  Just _  -> expectationFailure $ show a <> " should not be a subtype of " <> show b
+  Nothing -> pure ()
+
+shouldNotLoop :: (Show a, Eq a) => IO a -> Expectation
+shouldNotLoop act = timeout 1000000 act `shouldNotReturn` Nothing
+
+field n t req = Field (Identity n) (Identity t) (Identity req)
+
+constructor n t = Constructor (Identity n) (Identity t)
