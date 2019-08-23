@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -7,16 +8,25 @@ import Control.Exception
 import qualified Data.Aeson as A
 import Data.Functor.Identity
 import Data.Maybe
+import Data.Text
+import Generators()
 import Person
 import Person2
 import Person3
 import Schemas
 import System.Timeout
 import Test.Hspec
+import Test.Hspec.QuickCheck
 import Text.Show.Functions ()
 
 spec :: Spec
 spec = do
+  describe "encoding" $ do
+    prop "is the inverse of decoding" $ \(sc :: Schema) ->
+      decode (encode sc) `shouldBe` Right sc
+  describe "finite" $ do
+    prop "always produces a subtype" $ \(sc :: Schema) size ->
+      finite size sc `isSubtypeOf` sc `shouldSatisfy` isJust
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
       Record [field "a" Number Nothing, field "def" Number Nothing]
@@ -82,6 +92,8 @@ shouldNotBeSubtypeOf a b = case a `isSubtypeOf` b of
 shouldNotLoop :: (Show a, Eq a) => IO a -> Expectation
 shouldNotLoop act = timeout 1000000 act `shouldNotReturn` Nothing
 
+field :: Text -> Schema -> Maybe Bool -> Field Identity
 field n t req = Field (Identity n) (Identity t) (Identity req)
 
+constructor :: Text -> Maybe Schema -> Constructor Identity
 constructor n t = Constructor (Identity n) (Identity t)

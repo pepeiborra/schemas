@@ -46,6 +46,7 @@ test-suite spec
                      , Person2
                      , Person3
                      , SchemasSpec
+                     , Generators
   build-depends:       aeson
                      , aeson-pretty
                      , barbies
@@ -54,4 +55,6 @@ test-suite spec
                      , generic-lens
                      , hspec
                      , pretty-simple
+                     , QuickCheck
                      , schemas
+                     , text
