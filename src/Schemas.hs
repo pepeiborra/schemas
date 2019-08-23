@@ -92,7 +92,7 @@ data Schema
   deriving (Eq, Generic, Show)
 
 data Field f = Field
-  { name     :: f Text
+  { field     :: f Text
   , schema   :: f Schema
   , isRequired :: f (Maybe Bool) -- ^ defaults to True
   }
@@ -107,8 +107,8 @@ deriving instance Eq (Field Identity)
 deriving instance Show (Field Identity)
 
 data Constructor f = Constructor
-  { name   :: f Text
-  , schema :: f (Maybe Schema)
+  { constructor :: f Text
+  , schema      :: f (Maybe Schema)
   }
   deriving (Generic)
   deriving anyclass (FunctorB, ProductB, TraversableB)
@@ -169,10 +169,10 @@ instance  HasSchema a => HasSchema (NonEmpty a) where
   schema = TArray schema (NE.fromList . V.toList) (V.fromList . NE.toList)
 
 instance HasSchema (Field Identity) where
-  schema = record $ Field (required "name") (required "schema") (optional "required")
+  schema = record $ Field (required "field") (required "schema") (optional "required")
 
 instance HasSchema (Constructor Identity) where
-  schema = record $ Constructor (required "name") (optional "schema")
+  schema = record $ Constructor (required "constructor") (optional "schema")
 
 instance HasSchema Schema where
   schema = union'
@@ -403,7 +403,7 @@ isSubtypeOf sub sup = go sup sub
   go (Enum opts) (Enum opts') | all (`elem` opts') opts = Just id
   go (Union opts) (Union opts') = do
     ff <- forM opts $ \(Constructor (Identity n) (Identity sc)) -> do
-      Constructor _ (Identity sc') <- find ((== Identity n) . view #name) opts'
+      Constructor _ (Identity sc') <- find ((== Identity n) . view #constructor) opts'
       case (sc,sc') of
         (Nothing, Nothing) -> return id
         (Just asc, Just asc') -> do
@@ -413,9 +413,9 @@ isSubtypeOf sub sup = go sup sub
     return (foldr (.) id ff)
   go (Record opts) (Record opts') = do
     forM_ opts $ \f@(Field n _ _) ->
-      guard $ not (isRequiredField f) || isJust (find ((== n) . view #name) opts')
+      guard $ not (isRequiredField f) || isJust (find ((== n) . view #field) opts')
     ff <- forM opts' $ \f'@(Field (Identity n') (Identity sc') _) -> do
-      case find ((== Identity n') . view #name) opts of
+      case find ((== Identity n') . view #field) opts of
         Nothing -> do
           Just $ over (_Object) (Map.delete n')
         Just f@(Field _ (Identity sc) _) -> do
@@ -442,86 +442,126 @@ lookup a = fmap snd . find ((== a) . fst)
 -- The Schema schema is recursive and cannot be serialized unless we use finiteEncode
 -- >>> import Data.Aeson.Encode.Pretty
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
--- >>> B.putStrLn $ encodePretty $ finiteEncode 6 (theSchema @Schema)
+-- >>> B.putStrLn $ encodePretty $ finiteEncode 8 (theSchema @Schema)
 -- {
 --     "Union": [
 --         {
---             "name": "Bool"
+--             "constructor": "Bool"
 --         },
 --         {
---             "name": "Number"
+--             "constructor": "Number"
 --         },
 --         {
---             "name": "String"
+--             "constructor": "String"
 --         },
 --         {
 --             "schema": {
 --                 "Union": [
 --                     {
---                         "name": "Bool"
+--                         "constructor": "Bool"
 --                     },
 --                     {
---                         "name": "Number"
+--                         "constructor": "Number"
 --                     },
 --                     {
---                         "name": "String"
+--                         "constructor": "String"
 --                     },
 --                     {
---                         "schema": {},
---                         "name": "Array"
+--                         "schema": {
+--                             "Union": [
+--                                 {},
+--                                 {},
+--                                 {},
+--                                 {},
+--                                 {},
+--                                 {},
+--                                 {},
+--                                 {}
+--                             ]
+--                         },
+--                         "constructor": "Array"
 --                     },
 --                     {
---                         "schema": {},
---                         "name": "Enum"
+--                         "schema": {
+--                             "Array": "String"
+--                         },
+--                         "constructor": "Enum"
 --                     },
 --                     {
---                         "schema": {},
---                         "name": "Record"
+--                         "schema": {
+--                             "Array": {
+--                                 "Record": []
+--                             }
+--                         },
+--                         "constructor": "Record"
 --                     },
 --                     {
---                         "schema": {},
---                         "name": "Union"
+--                         "schema": {
+--                             "Array": {
+--                                 "Record": []
+--                             }
+--                         },
+--                         "constructor": "Union"
 --                     },
 --                     {
---                         "name": "Empty"
+--                         "constructor": "Empty"
 --                     }
 --                 ]
 --             },
---             "name": "Array"
+--             "constructor": "Array"
 --         },
 --         {
 --             "schema": {
---                 "Array": {
---                     "String": {}
---                 }
+--                 "Array": "String"
 --             },
---             "name": "Enum"
---         },
---         {
---             "schema": {
---                 "Array": {
---                     "Record": [
---                         {},
---                         {},
---                         {}
---                     ]
---                 }
---             },
---             "name": "Record"
+--             "constructor": "Enum"
 --         },
 --         {
 --             "schema": {
 --                 "Array": {
 --                     "Record": [
---                         {},
---                         {}
+--                         {
+--                             "field": "field",
+--                             "schema": "String"
+--                         },
+--                         {
+--                             "field": "schema",
+--                             "schema": {
+--                                 "Union": []
+--                             }
+--                         },
+--                         {
+--                             "field": "required",
+--                             "required": false,
+--                             "schema": "Bool"
+--                         }
 --                     ]
 --                 }
 --             },
---             "name": "Union"
+--             "constructor": "Record"
 --         },
 --         {
---             "name": "Empty"
+--             "schema": {
+--                 "Array": {
+--                     "Record": [
+--                         {
+--                             "field": "constructor",
+--                             "schema": "String"
+--                         },
+--                         {
+--                             "field": "schema",
+--                             "required": false,
+--                             "schema": {
+--                                 "Union": []
+--                             }
+--                         }
+--                     ]
+--                 }
+--             },
+--             "constructor": "Union"
+--         },
+--         {
+--             "constructor": "Empty"
 --         }
 --     ]
 -- }

@@ -70,36 +70,36 @@ pepe = Person
 -- {
 --     "Record": [
 --         {
---             "schema": "String",
---             "name": "name"
+--             "field": "name",
+--             "schema": "String"
 --         },
 --         {
---             "schema": "Number",
---             "name": "age"
+--             "field": "age",
+--             "schema": "Number"
 --         },
 --         {
+--             "field": "addresses",
 --             "schema": {
 --                 "Array": "String"
---             },
---             "name": "addresses"
+--             }
 --         },
 --         {
+--             "field": "education",
 --             "schema": {
 --                 "Union": [
 --                     {
---                         "name": "NoEducation"
+--                         "constructor": "NoEducation"
 --                     },
 --                     {
 --                         "schema": "String",
---                         "name": "PhD"
+--                         "constructor": "PhD"
 --                     },
 --                     {
 --                         "schema": "String",
---                         "name": "Degree"
+--                         "constructor": "Degree"
 --                     }
 --                 ]
---             },
---             "name": "education"
+--             }
 --         }
 --     ]
 -- }
