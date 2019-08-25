@@ -68,40 +68,28 @@ pepe = Person
 -- }
 -- >>> B.putStrLn $ encodePretty $ encode (theSchema @(Person Identity))
 -- {
---     "Record": [
---         {
---             "field": "name",
---             "schema": "String"
+--     "Record": {
+--         "education": {
+--             "schema": {
+--                 "Union": {
+--                     "PhD": "String",
+--                     "Degree": "String",
+--                     "NoEducation": "Empty"
+--                 }
+--             }
 --         },
---         {
---             "field": "age",
---             "schema": "Number"
---         },
---         {
---             "field": "addresses",
+--         "addresses": {
 --             "schema": {
 --                 "Array": "String"
 --             }
 --         },
---         {
---             "field": "education",
---             "schema": {
---                 "Union": [
---                     {
---                         "constructor": "NoEducation"
---                     },
---                     {
---                         "schema": "String",
---                         "constructor": "PhD"
---                     },
---                     {
---                         "schema": "String",
---                         "constructor": "Degree"
---                     }
---                 ]
---             }
+--         "age": {
+--             "schema": "Number"
+--         },
+--         "name": {
+--             "schema": "String"
 --         }
---     ]
+--     }
 -- }
 
 -- >>> import Text.Pretty.Simple

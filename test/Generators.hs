@@ -4,19 +4,22 @@
 module Generators where
 
 import Control.Monad
-import Data.Functor.Identity
-import Data.List.NonEmpty (fromList)
 import Data.Text (Text)
+import GHC.Exts (IsList(..))
+import Numeric.Natural
 import Schemas
 import Test.QuickCheck
 
 instance Arbitrary Schema where
   arbitrary = sized genSchema
 
-fieldNames :: [Identity Text]
+instance Arbitrary Natural where
+  arbitrary = fmap (fromIntegral . getPositive @Int) arbitrary
+
+fieldNames :: [Text]
 fieldNames = ["field1", "field2", "field3"]
 
-constructorNames :: [Identity Text]
+constructorNames :: [Text]
 constructorNames = ["constructor1", "constructor2"]
 
 genSchema ::  Int -> Gen (Schema)
@@ -25,11 +28,11 @@ genSchema _ = oneof
   [ Record <$> do
       nfields <- choose (1,2)
       fieldArgs <- replicateM nfields (scale (`div` 2) arbitrary)
-      return $ fromList (zipWith (\n (sc,a) -> Field n sc a) fieldNames fieldArgs)
+      return $ fromList (zipWith (\n (sc,a) -> (n, Field sc a)) fieldNames fieldArgs)
   , Union  <$> do
       nconstructors <- choose (1,2)
       args <- replicateM nconstructors (scale (`div` 2) arbitrary)
-      return $ fromList $ zipWith Constructor constructorNames args
+      return $ fromList $ zip constructorNames args
   , Array  <$> scale(`div`2) arbitrary
   , Enum   <$> do
       n <- choose (1,2)

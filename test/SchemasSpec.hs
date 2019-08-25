@@ -8,7 +8,6 @@ import Control.Exception
 import qualified Data.Aeson as A
 import Data.Functor.Identity
 import Data.Maybe
-import Data.Text
 import Generators()
 import Person
 import Person2
@@ -53,16 +52,19 @@ spec = do
     it "subtypes cannot remove enum choices" $ do
       Enum ["def"] `shouldNotBeSubtypeOf` Enum ["A"]
     it "subtypes can add constructors" $ do
-      Union [constructor' "A" (Just String), constructor' "def" Nothing]
-        `shouldBeSubtypeOf` Union [constructor' "def" Nothing]
+      Union [constructor' "A" String, constructor' "def" Empty]
+        `shouldBeSubtypeOf` Union [constructor' "def" Empty]
     it "subtypes cannot remove constructors" $ do
-      Union [constructor' "def" Nothing]
-        `shouldNotBeSubtypeOf` Union [constructor' "A" (Just String)]
+      Union [constructor' "def" Empty]
+        `shouldNotBeSubtypeOf` Union [constructor' "A" (String)]
     it "subtypes can expand an array" $ do
       Array String `shouldBeSubtypeOf` String
     it "subtypes cannot drop an array" $ do
       String `shouldNotBeSubtypeOf` Array String
   describe "examples" $ do
+    describe "Schemas" $ do
+      prop "finite(schema @Schema) is a subtype of (schema @Schema)" $ \n ->
+        finite n (theSchema @Schema) `isSubtypeOf` theSchema @Schema `shouldSatisfy` isJust
     describe "Person" $ do
       it "decode is the inverse of encode" $ do
         decode (encode pepe) `shouldBe` Right pepe
@@ -92,8 +94,8 @@ shouldNotBeSubtypeOf a b = case a `isSubtypeOf` b of
 shouldNotLoop :: (Show a, Eq a) => IO a -> Expectation
 shouldNotLoop act = timeout 1000000 act `shouldNotReturn` Nothing
 
-field' :: Text -> Schema -> Maybe Bool -> Field Identity
-field' n t req = Field (Identity n) (Identity t) (Identity req)
+field' :: a -> Schema -> Maybe Bool -> (a, Field Identity)
+field' n t req = (n, Field (Identity t) (Identity req))
 
-constructor' :: Text -> Maybe Schema -> Constructor Identity
-constructor' n t = Constructor (Identity n) (Identity t)
+constructor' :: a -> b -> (a, b)
+constructor' n t = (n, t)

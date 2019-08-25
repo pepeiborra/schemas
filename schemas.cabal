@@ -27,6 +27,7 @@ library
                      , generic-lens
                      , lens
                      , lens-aeson
+                     , pretty-simple
                      , profunctors
                      , scientific
                      , text
