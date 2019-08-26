@@ -8,7 +8,7 @@ import Control.Exception
 import qualified Data.Aeson as A
 import Data.Functor.Identity
 import Data.Maybe
-import Generators()
+import Generators
 import Person
 import Person2
 import Person3
@@ -24,7 +24,7 @@ spec = do
     prop "is the inverse of decoding" $ \(sc :: Schema) ->
       decode (encode sc) `shouldBe` Right sc
   describe "finite" $ do
-    prop "always produces a subtype" $ \(sc :: Schema) size ->
+    prop "always produces a subtype" $ \(sc :: Schema) (SmallNatural size) ->
       finite size sc `isSubtypeOf` sc `shouldSatisfy` isJust
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
@@ -63,7 +63,7 @@ spec = do
       String `shouldNotBeSubtypeOf` Array String
   describe "examples" $ do
     describe "Schemas" $ do
-      prop "finite(schema @Schema) is a subtype of (schema @Schema)" $ \n ->
+      prop "finite(schema @Schema) is a subtype of (schema @Schema)" $ \(SmallNatural n) ->
         finite n (theSchema @Schema) `isSubtypeOf` theSchema @Schema `shouldSatisfy` isJust
     describe "Person" $ do
       it "decode is the inverse of encode (HKT)" $ do

@@ -1,20 +1,28 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Generators where
 
-import Control.Monad
-import Data.Text (Text)
-import GHC.Exts (IsList(..))
-import Numeric.Natural
-import Schemas
-import Test.QuickCheck
+import           Control.Monad
+import           Data.Text       (Text)
+import           GHC.Exts        (IsList (..))
+import           Numeric.Natural
+import           Schemas
+import           Test.QuickCheck
 
 instance Arbitrary Schema where
   arbitrary = sized genSchema
 
-instance Arbitrary Natural where
-  arbitrary = fmap (fromIntegral . getPositive @Int) arbitrary
+newtype SmallNatural = SmallNatural Natural
+  deriving (Eq, Ord, Num)
+  deriving newtype Show
+
+instance Arbitrary (SmallNatural) where
+  arbitrary = fromIntegral <$> choose (0::Int, 10)
+  shrink 0 = []
+  shrink n = [n-1]
 
 fieldNames :: [Text]
 fieldNames = ["field1", "field2", "field3"]
