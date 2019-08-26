@@ -66,8 +66,12 @@ spec = do
       prop "finite(schema @Schema) is a subtype of (schema @Schema)" $ \n ->
         finite n (theSchema @Schema) `isSubtypeOf` theSchema @Schema `shouldSatisfy` isJust
     describe "Person" $ do
-      it "decode is the inverse of encode" $ do
-        decode (encode pepe) `shouldBe` Right pepe
+      it "decode is the inverse of encode (HKT)" $ do
+        decodeWith hktPersonSchema (encodeWith hktPersonSchema pepe) `shouldBe` Right pepe
+      it "decode is the inverse of encode (applicative)" $ do
+        decodeWith applicativePersonSchema (encodeWith applicativePersonSchema pepe) `shouldBe` Right pepe
+      it "applicativePersonSchema is equal to the HKT schema" $ do
+        extractSchema applicativePersonSchema `shouldBe` extractSchema hktPersonSchema
     describe "Person2" $ do
       it "Person2 is a subtype of Person" $ do
         theSchema @(Person2 Identity)
@@ -95,7 +99,7 @@ shouldNotLoop :: (Show a, Eq a) => IO a -> Expectation
 shouldNotLoop act = timeout 1000000 act `shouldNotReturn` Nothing
 
 field' :: a -> Schema -> Maybe Bool -> (a, Field Identity)
-field' n t req = (n, Field (Identity t) (Identity req))
+field' n t isReq = (n, Field (Identity t) (Identity isReq))
 
 constructor' :: a -> b -> (a, b)
 constructor' n t = (n, t)

@@ -32,11 +32,17 @@ module Schemas
   -- ** Construction
   , empty
   , enum
+  -- *** Higher-kinded record definition
   , record
   , RecordSchema
   , RecordField(..)
   , optional
   , required
+  -- *** Applicative record definition
+  , record'
+  , opt
+  , req
+  -- *** Unions
   , union
   , union'
   , Alt(..)
@@ -52,6 +58,7 @@ module Schemas
   , finiteEncode
   )where
 
+import           Control.Applicative.Free
 import           Control.Lens         hiding (Empty, enum)
 import           Control.Monad
 import           Data.Aeson           (Value)
@@ -94,7 +101,7 @@ data Schema
   deriving (Eq, Generic, Show)
 
 data Field f = Field
-  { schema   :: f Schema
+  { fieldSchema   :: f Schema
   , isRequired :: f (Maybe Bool) -- ^ defaults to True
   }
   deriving (Generic)
@@ -122,6 +129,7 @@ data TypedSchemaFlex from a where
   PureSchema :: a -> TypedSchemaFlex from a
   RecordSchema :: (ProductB f, TraversableB f) =>
                   RecordSchema f -> (f Identity -> a) -> (from -> f Identity) -> TypedSchemaFlex from a
+  RecApSchema :: Ap (RecordFieldAp from') a' -> (a' -> a) -> (from -> from') -> TypedSchemaFlex from a
   UnionSchema :: (NonEmpty (Text, TypedSchemaFlex from a)) -> (from -> Text) -> TypedSchemaFlex from a
 
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
@@ -137,18 +145,79 @@ instance Functor (TypedSchemaFlex from) where
   fmap = rmap
 
 instance Profunctor TypedSchemaFlex where
-  dimap _ f (PureSchema a               ) = PureSchema (f a)
-  dimap g f (TBool   tof fromf          ) = TBool (f . tof) (fromf . g)
-  dimap g f (TNumber tof fromf          ) = TNumber (f . tof) (fromf . g)
-  dimap g f (TString tof fromf          ) = TString (f . tof) (fromf . g)
-  dimap g f (TEnum        opts     fromf) = TEnum (second f <$> opts) (fromf . g)
-  dimap g f (TArray       sc   tof fromf) = TArray sc (f . tof) (fromf . g)
-  dimap g f (TMap         sc   tof fromf) = TMap sc (f . tof) (fromf . g)
-  dimap g f (RecordSchema sc tof fromf  ) = RecordSchema sc (f . tof) (fromf . g)
-  dimap g f (UnionSchema tags       getTag) = UnionSchema (second (dimap g f) <$> tags) (getTag . g)
+  dimap _ f (PureSchema a             ) = PureSchema (f a)
+  dimap g f (TBool   tof  fromf       ) = TBool (f . tof) (fromf . g)
+  dimap g f (TNumber tof  fromf       ) = TNumber (f . tof) (fromf . g)
+  dimap g f (TString tof  fromf       ) = TString (f . tof) (fromf . g)
+  dimap g f (TEnum   opts fromf       ) = TEnum (second f <$> opts) (fromf . g)
+  dimap g f (TArray       sc tof fromf) = TArray sc (f . tof) (fromf . g)
+  dimap g f (TMap         sc tof fromf) = TMap sc (f . tof) (fromf . g)
+  dimap g f (RecordSchema sc tof fromf) = RecordSchema sc (f . tof) (fromf . g)
+  dimap g f (RecApSchema  sc tof fromf) = RecApSchema sc (f . tof) (fromf . g)
+  dimap g f (UnionSchema tags getTag) =
+    UnionSchema (second (dimap g f) <$> tags) (getTag . g)
 
 type TypedSchema a = TypedSchemaFlex a a
+
+-- --------------------------------------------------------------------------------
+-- Typed Records
+
 type RecordSchema f = f RecordField
+
+-- | Define a record schema using a higher-kinded type
+record :: (ProductB f, TraversableB f) => RecordSchema f -> TypedSchema (f Identity)
+record sc = RecordSchema sc id id
+
+data RecordField a where
+  Required :: Text -> TypedSchema a -> RecordField a
+  Optional :: Text -> TypedSchema a -> RecordField (Maybe a)
+
+required :: HasSchema a => Text -> RecordField a
+required n = Required n schema
+
+optional :: HasSchema a => Text -> RecordField (Maybe a)
+optional n = Optional n schema
+
+-- --------------------------------------------------------------------------------
+-- Applicative records
+
+data RecordFieldAp from a where
+  RequiredAp :: Text -> (from -> a) -> TypedSchema a -> RecordFieldAp from a
+  OptionalAp :: Text -> (from -> Maybe a) -> TypedSchema a -> RecordFieldAp from (Maybe a)
+
+-- | Define a record schema using applicative syntax
+record' :: Ap (RecordFieldAp a) a -> TypedSchema a
+record' sc = RecApSchema sc id id
+
+req :: HasSchema a => Text -> (from -> a) -> Ap (RecordFieldAp from) a
+req n get = Ap (RequiredAp n get schema) (pure id)
+
+opt :: HasSchema a => Text -> (from -> Maybe a) -> Ap (RecordFieldAp from) (Maybe a)
+opt n get = Ap (OptionalAp n get schema) (pure id)
+
+-- --------------------------------------------------------------------------------
+-- Typed Unions
+
+union :: (NonEmpty (Text, TypedSchema a, a -> Bool)) -> TypedSchema a
+union args = UnionSchema constructors fromF
+ where
+  constructors = args <&> \(c, sc, _) -> (c, sc)
+  fromF x = maybe (error $ "invalid constructor") (view _1)
+    $ find (\(_, _, p) -> p x) args
+
+data Alt from where
+  Alt :: Text -> Prism' from b -> TypedSchema b -> Alt from
+
+alt :: HasSchema a => Text -> Prism' from a -> Alt from
+alt n p = Alt n p schema
+
+union' :: (NonEmpty (Alt from)) -> TypedSchema from
+union' args = union $ args <&> \(Alt c p sc) ->
+    withPrism p $ \t f ->
+      (c, dimap (either (error "impossible") id . f) t sc, isRight . f)
+
+-- HasSchema class and instances
+-- -----------------------------------------------------------------------------------
 
 class HasSchema a where
   schema :: TypedSchema a
@@ -189,6 +258,9 @@ instance  HasSchema a => HasSchema (NonEmpty a) where
 instance HasSchema (Field Identity) where
   schema = record $ Field (required "schema") (optional "required")
 
+instance HasSchema a => HasSchema (Identity a) where
+  schema = dimap runIdentity Identity schema
+
 instance HasSchema Schema where
   schema = union'
     [ alt "Bool" #_Bool
@@ -206,45 +278,6 @@ instance HasSchema a => HasSchema (HashMap Text a) where
   schema = TMap schema id id
 
 -- --------------------------------------------------------------------------------
--- Typed Records
-
--- | Annotates a typed schema with a field name
-
-record :: (ProductB f, TraversableB f) => RecordSchema f -> TypedSchema (f Identity)
-record sc = RecordSchema sc id id
-
-data RecordField a where
-  Required :: Text -> TypedSchema a -> RecordField a
-  Optional :: Text -> TypedSchema a -> RecordField (Maybe a)
-
-required :: HasSchema a => Text -> RecordField a
-required n = Required n schema
-
-optional :: HasSchema a => Text -> RecordField (Maybe a)
-optional n = Optional n schema
-
--- --------------------------------------------------------------------------------
--- Typed Unions
-
-union :: (NonEmpty (Text, TypedSchema a, a -> Bool)) -> TypedSchema a
-union args = UnionSchema constructors fromF
- where
-  constructors = args <&> \(c, sc, _) -> (c, sc)
-  fromF x = maybe (error $ "invalid constructor") (view _1)
-    $ find (\(_, _, p) -> p x) args
-
-data Alt from where
-  Alt :: Text -> Prism' from b -> TypedSchema b -> Alt from
-
-alt :: HasSchema a => Text -> Prism' from a -> Alt from
-alt n p = Alt n p schema
-
-union' :: (NonEmpty (Alt from)) -> TypedSchema from
-union' args = union $ args <&> \(Alt c p sc) ->
-    withPrism p $ \t f ->
-      (c, dimap (either (error "impossible") id . f) t sc, isRight . f)
-
--- --------------------------------------------------------------------------------
 -- Finite schemas
 
 -- | Ensure that a 'Schema' is finite by enforcing a max depth.
@@ -258,10 +291,10 @@ finite = go
   go 0 (Union _) = Empty
   go 0 (StringMap _) = Empty
   go d (Record opts) =
-    Record $ fmap (\(Field sc opt) -> Field (go (pred d) <$> sc) opt) opts
-  go d (Union opts) = Union (fmap (go (pred d)) opts)
-  go d (Array sc  ) = Array (go (pred d) sc)
-  go d (StringMap sc  ) = StringMap (go (pred d) sc)
+    Record $ fmap (\(Field sc isOptional) -> Field (go (max 0 (pred d)) <$> sc) isOptional) opts
+  go d (Union opts) = Union (fmap (go (max 0 (pred d))) opts)
+  go d (Array sc  ) = Array (go (max 0 (pred d)) sc)
+  go d (StringMap sc  ) = StringMap (go (max 0 (pred d)) sc)
   go _ other        = other
 
 -- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
@@ -274,7 +307,7 @@ finiteValue d sc
 -- Schema extraction from a TypedSchema
 
 -- | Extract an untyped schema that can be serialized
-extractSchema :: TypedSchema a -> Schema
+extractSchema :: TypedSchemaFlex from a -> Schema
 extractSchema TBool{} = Bool
 extractSchema PureSchema{} = Empty
 extractSchema TNumber{} = Number
@@ -282,10 +315,14 @@ extractSchema TString{} = String
 extractSchema (TEnum opts  _) = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array (extractSchema sc)
 extractSchema (TMap sc _ _)  = StringMap (extractSchema sc)
-extractSchema (RecordSchema rs _ _) = Record $ fromList $ bfoldMap ((:[]) . f) rs
+extractSchema (RecordSchema rs _ _) = Record $ fromList $ bfoldMap ((:[]) . extractField) rs
   where
-    f (Required n sc) = (n, Field (pure $ extractSchema sc) (pure Nothing))
-    f (Optional n sc) = (n, Field (pure $ extractSchema sc) (pure $ Just False))
+    extractField (Required n sc) = (n, Field (pure $ extractSchema sc) (pure Nothing))
+    extractField (Optional n sc) = (n, Field (pure $ extractSchema sc) (pure $ Just False))
+extractSchema (RecApSchema rs _ _) = Record $ fromList $ runAp_ ( (:[]) . extractField) rs
+  where
+    extractField (RequiredAp n _ sc) = (n, Field (pure $ extractSchema sc) (pure Nothing))
+    extractField (OptionalAp n _ sc) = (n, Field (pure $ extractSchema sc) (pure $ Just False))
 extractSchema (UnionSchema scs _getTag) =
   Union $ Map.fromList $ NE.toList $ scs <&> \(n, sc) -> (n, extractSchema sc)
 
@@ -296,7 +333,7 @@ theSchema = extractSchema (schema @a)
 -- Encoding
 
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
-encodeWith :: TypedSchema a -> a -> Value
+encodeWith :: TypedSchemaFlex from a -> from -> Value
 encodeWith (TBool _ fromf) b = A.Bool (fromf b)
 encodeWith (TNumber _ fromf) b = A.Number (fromf b)
 encodeWith (TString _ fromf) b = A.String (fromf b)
@@ -304,6 +341,13 @@ encodeWith (TEnum _ fromf) b = A.String (fromf b)
 encodeWith (PureSchema _) _  = A.object []
 encodeWith (TArray sc _ fromf) b = A.Array (encodeWith sc <$> fromf b)
 encodeWith (TMap   sc _ fromf) b = A.Object(encodeWith sc <$> fromf b)
+encodeWith (RecApSchema rec _ fromf) x = A.Object $ fromList fields
+  where
+    fields = runAp_ (maybe [] (:[]) . extractFieldAp (fromf x)) rec
+
+    extractFieldAp b (RequiredAp n get sc) = Just (n, encodeWith sc  $  get b)
+    extractFieldAp b (OptionalAp n get sc) = (n,) . encodeWith sc <$> get b
+
 encodeWith (RecordSchema rs _ fromf) b =
   A.Object
     $ fromList
@@ -345,35 +389,57 @@ data DecodeError
 -- | Given a JSON 'Value' and a typed schema, extract a Haskell value
 decodeWith :: TypedSchema a -> Value -> Either DecodeError a
 decodeWith = go []
-  where
-    go :: [Text] -> TypedSchema a -> Value -> Either DecodeError a
-    go _tx (TBool tof _) (A.Bool x) = pure $ tof x
-    go _tx (TNumber tof _) (A.Number x) = pure $ tof x
-    go _tx (TString tof _) (A.String x) = pure $ tof x
-    go ctx (TEnum opts _) (A.String x) = maybe (Left $ InvalidEnumValue x (fst <$> opts) ctx) pure $ lookup x opts
-    go ctx (TArray sc tof _) (A.Array x) = tof <$> traverse (go ("[]" : ctx) sc) x
-    go ctx (TMap   sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
-    go _tx (PureSchema a) _ = pure a
-    go ctx (RecordSchema rsc tof _) (A.Object fields) = tof <$> btraverse f rsc
-      where
-        f :: RecordField a -> Either DecodeError (Identity a)
-        f (Required n sc) = case Map.lookup n fields of
-          Just v  -> pure <$> go (n : ctx) sc v
-          Nothing ->
-            case sc of
-              TArray _ tof' _ -> pure $ pure $ tof' []
-              _ ->  Left $ MissingRecordField n ctx
-        f (Optional n sc) = case Map.lookup n fields of
-          Just v  -> pure . pure <$> go (n : ctx) sc v
-          Nothing -> pure $ pure Nothing
-    go _tx (UnionSchema opts _) (A.String n)
-      | Just (PureSchema a) <- lookup n opts = pure a
-    go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
-      [(n, v)] -> case lookup n opts of
-        Just sc -> go (n : ctx) sc v
-        Nothing -> Left $ InvalidConstructor n ctx
-      _ -> Left $ InvalidUnionType it ctx
-    go ctx _ _ = Left $ SchemaMismatch ctx
+ where
+  go :: [Text] -> TypedSchema a -> Value -> Either DecodeError a
+  go _tx (TBool   tof _) (A.Bool   x) = pure $ tof x
+  go _tx (TNumber tof _) (A.Number x) = pure $ tof x
+  go _tx (TString tof _) (A.String x) = pure $ tof x
+  go ctx (TEnum opts _) (A.String x) =
+    maybe (Left $ InvalidEnumValue x (fst <$> opts) ctx) pure $ lookup x opts
+  go ctx (TArray sc tof _) (A.Array x) =
+    tof <$> traverse (go ("[]" : ctx) sc) x
+  go ctx (TMap sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
+  go _tx (PureSchema a) _ = pure a
+  go ctx (RecordSchema rsc tof _) (A.Object fields) = tof <$> btraverse f rsc
+   where
+    f :: RecordField a -> Either DecodeError (Identity a)
+    f (Required n sc) = pure <$> doRequiredField ctx n sc fields
+    f (Optional n sc) = pure <$> doOptionalField ctx n sc fields
+  go ctx (RecApSchema rec tof _) (A.Object fields) = tof <$> (runAp f rec)
+   where
+    f :: RecordFieldAp from a -> Either DecodeError a
+    f (RequiredAp n _ sc) = doRequiredField ctx n sc fields
+    f (OptionalAp n _ sc) = doOptionalField ctx n sc fields
+  go _tx (UnionSchema opts _) (A.String n)
+    | Just (PureSchema a) <- lookup n opts = pure a
+  go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
+    [(n, v)] -> case lookup n opts of
+      Just sc -> go (n : ctx) sc v
+      Nothing -> Left $ InvalidConstructor n ctx
+    _ -> Left $ InvalidUnionType it ctx
+  go ctx _ _ = Left $ SchemaMismatch ctx
+
+  doRequiredField
+    :: [Text]
+    -> Text
+    -> TypedSchema b
+    -> HashMap Text Value
+    -> Either DecodeError b
+  doRequiredField ctx n sc fields = case Map.lookup n fields of
+    Just v  -> go (n : ctx) sc v
+    Nothing -> case sc of
+      TArray _ tof' _ -> pure $ tof' []
+      _               -> Left $ MissingRecordField n ctx
+
+  doOptionalField
+    :: [Text]
+    -> Text
+    -> TypedSchema b
+    -> HashMap Text Value
+    -> Either DecodeError (Maybe b)
+  doOptionalField ctx n sc fields = case Map.lookup n fields of
+    Just v  -> pure <$> go (n : ctx) sc v
+    Nothing -> pure Nothing
 
 decode :: HasSchema a => Value -> Either DecodeError a
 decode = decodeWith schema

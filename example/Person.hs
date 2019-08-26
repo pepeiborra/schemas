@@ -38,11 +38,22 @@ deriving instance Eq   (Person Identity)
 deriving instance Show (Person Identity)
 
 instance HasSchema (Person Identity) where
-  schema = record
-         $ Person (required "name")
-                  (required "age")
-                  (required "addresses")
-                  (required "education")
+  schema = hktPersonSchema
+
+-- a record schema is a record of schemas
+hktPersonSchema :: TypedSchema (Person Identity)
+hktPersonSchema = record $ Person (required "name")
+                                  (required "age")
+                                  (required "addresses")
+                                  (required "education")
+
+-- Alternatively, use a free applicative to define a record schema
+applicativePersonSchema :: TypedSchema (Person Identity)
+applicativePersonSchema = record' $
+  Person <$> req "name" Person.name
+         <*> req "age" age
+         <*> req "addresses" addresses
+         <*> req "education" education
 
 pepe :: Person Identity
 
@@ -105,4 +116,57 @@ pepe = Person
 --         , education = Identity
 --             ( PhD { unPhD = "Computer Science" } )
 --         }
+--     )
+
+-- >>> import Data.Aeson.Encode.Pretty
+-- >>> import qualified Data.ByteString.Lazy.Char8 as B
+-- >>> B.putStrLn $ encodePretty $ encode (extractSchema applicativePersonSchema)
+-- {
+--     "Record": {
+--         "education": {
+--             "schema": {
+--                 "Union": {
+--                     "PhD": "String",
+--                     "Degree": "String",
+--                     "NoEducation": "Empty"
+--                 }
+--             }
+--         },
+--         "addresses": {
+--             "schema": {
+--                 "Array": "String"
+--             }
+--         },
+--         "age": {
+--             "schema": "Number"
+--         },
+--         "name": {
+--             "schema": "String"
+--         }
+--     }
+-- }
+-- >>> B.putStrLn $ encodePretty $ encodeWith applicativePersonSchema pepe
+-- {
+--     "education": {
+--         "PhD": "Computer Science"
+--     },
+--     "addresses": [
+--         "2 Edward Square",
+--         "La Mar 10"
+--     ],
+--     "age": 38,
+--     "name": "Pepe"
+-- }
+-- >>> import Text.Pretty.Simple
+-- >>> pPrintNoColor $ decodeWith applicativePersonSchema $ encodeWith applicativePersonSchema pepe-- Right 
+--     ( Person 
+--         { name = Identity "Pepe" 
+--         , age = Identity 38
+--         , addresses = Identity 
+--             [ "2 Edward Square" 
+--             , "La Mar 10" 
+--             ] 
+--         , education = Identity 
+--             ( PhD { unPhD = "Computer Science" } )
+--         } 
 --     )
