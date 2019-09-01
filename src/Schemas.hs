@@ -283,7 +283,11 @@ instance HasSchema Schema where
     , alt "Record" #_Record
     , alt "Union" #_Union
     , alt "Empty" #_Empty
+    , alt "Or" #_Or
     ]
+
+instance (HasSchema a, HasSchema b) => HasSchema (a,b) where
+  schema = record $ (,) <$> field "fst" fst <*> field "snd" snd
 
 instance HasSchema a => HasSchema (HashMap Text a) where
   schema = TMap schema id id
