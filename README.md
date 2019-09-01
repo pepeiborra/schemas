@@ -32,6 +32,19 @@ For example, given a `S_3` schema that removes a field from `S_2`, we have:
 
 The `~` relation is an equivalence class, i.e. it is reflexive, symmetric and transitive.
 
+## Alternative encodings
+
+Sometimes there is more than one way to encode a value. A field can be renamed or change its type, an optional field become mandatory, several fields can be merged into one, etc. Alternative encodings allow for backwards compatible schema evolution.
+
+Schemas support alternative encodings via the 'Or' constructor. The schema `A|B` encodes a value in two alternative ways `A` and `B`. A message created with this schema may encodings A, B or both. 'encode' will always create messages with all the possible encodings. While messages with multiple alternative encodings are not desirable for serialization, the desired message can be carved out using the subtyping relation. All the following hold:
+```
+A|B < A (the coercion A -> A|B will produce a message with an A encoding)
+A|B < B (the coercion B -> A|B will produce a message with a  B encoding)
+A < A|B (the coercion A|B -> A will succeed only if the message contains an A encoding)
+B < A|B (the coercoin A|B -> B will succeed only if the message contains a  B encoding)
+```
+
+Typed schemas implement a limited form of alternative encodings via the `Alternative` instance for record fields. In the future a similar 'Alternative' instance for union constructors could be added.
 
 ## Example
 - [Person](example/Person.hs)

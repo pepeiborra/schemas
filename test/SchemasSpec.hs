@@ -73,13 +73,20 @@ spec = do
       it "applicativePersonSchema is equal to the HKT schema" $ do
         extractSchema applicativePersonSchema `shouldBe` extractSchema hktPersonSchema
     describe "Person2" $ do
-      it "Person2 is a subtype of Person" $ do
-        theSchema @(Person2 Identity)
+      it "Person2 < Person" $ do
+        theSchema @Person2
           `isSubtypeOf`   theSchema @(Person Identity)
           `shouldSatisfy` isJust
-      it "Person is a subtype of Person2" $ do
+      it "pepe2 `as` Person" $ do
+        coerced <- maybe (fail "coerce") pure $ coerce @Person2 @(Person Identity) (encode pepe2)
+        decode coerced `shouldBe` Right pepe
+      it "pepe `as` Person2" $ do
+        coerced <- maybe (fail "coerce") pure $ coerce @(Person Identity) @Person2 (encode pepe)
+        print coerced
+        decode coerced `shouldBe` Right pepe2
+      it "Person < Person2" $ do
         theSchema @(Person Identity)
-          `isSubtypeOf`   theSchema @(Person2 Identity)
+          `isSubtypeOf`   theSchema @Person2
           `shouldSatisfy` isJust
     describe "Person3" $ do
       it "finiteEncode works as expected" $ shouldNotLoop $ evaluate $ A.encode

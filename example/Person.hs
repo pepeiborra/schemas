@@ -29,7 +29,7 @@ data Person f = Person
   { name      :: f String
   , age       :: f Int
   , addresses :: f [String]
-  , education :: f Education
+  , studies   :: f Education
   }
   deriving Generic
   deriving anyclass (FunctorB, ProductB, TraversableB)
@@ -45,7 +45,7 @@ hktPersonSchema :: TypedSchema (Person Identity)
 hktPersonSchema = record $ Person (required "name")
                                   (required "age")
                                   (required "addresses")
-                                  (required "education")
+                                  (required "studies")
 
 -- Alternatively, use a free applicative to define a record schema
 applicativePersonSchema :: TypedSchema (Person Identity)
@@ -53,7 +53,7 @@ applicativePersonSchema = record' $
   Person <$> req "name" Person.name
          <*> req "age" age
          <*> req "addresses" addresses
-         <*> req "education" education
+         <*> req "studies" studies
 
 pepe :: Person Identity
 
@@ -67,7 +67,7 @@ pepe = Person
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> B.putStrLn $ encodePretty $ encode pepe
 -- {
---     "education": {
+--     "studies": {
 --         "PhD": "Computer Science"
 --     },
 --     "addresses": [
@@ -80,7 +80,7 @@ pepe = Person
 -- >>> B.putStrLn $ encodePretty $ encode (theSchema @(Person Identity))
 -- {
 --     "Record": {
---         "education": {
+--         "studies": {
 --             "schema": {
 --                 "Union": {
 --                     "PhD": "String",
@@ -113,7 +113,7 @@ pepe = Person
 --             [ "2 Edward Square"
 --             , "La Mar 10"
 --             ]
---         , education = Identity
+--         , studies = Identity
 --             ( PhD { unPhD = "Computer Science" } )
 --         }
 --     )
@@ -123,7 +123,7 @@ pepe = Person
 -- >>> B.putStrLn $ encodePretty $ encode (extractSchema applicativePersonSchema)
 -- {
 --     "Record": {
---         "education": {
+--         "studies": {
 --             "schema": {
 --                 "Union": {
 --                     "PhD": "String",
@@ -147,7 +147,7 @@ pepe = Person
 -- }
 -- >>> B.putStrLn $ encodePretty $ encodeWith applicativePersonSchema pepe
 -- {
---     "education": {
+--     "studies": {
 --         "PhD": "Computer Science"
 --     },
 --     "addresses": [
@@ -166,7 +166,7 @@ pepe = Person
 --             [ "2 Edward Square" 
 --             , "La Mar 10" 
 --             ] 
---         , education = Identity 
+--         , studies = Identity 
 --             ( PhD { unPhD = "Computer Science" } )
 --         } 
 --     )
