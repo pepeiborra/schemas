@@ -32,7 +32,7 @@ constructorNames = ["constructor1", "constructor2"]
 
 genSchema ::  Int -> Gen (Schema)
 genSchema 0 = elements [Empty, Bool, Number, String]
-genSchema _ = oneof
+genSchema n = oneof
   [ Record <$> do
       nfields <- choose (1,2)
       fieldArgs <- replicateM nfields (scale (`div` 2) arbitrary)
@@ -45,5 +45,6 @@ genSchema _ = oneof
   , Enum   <$> do
       n <- choose (1,2)
       return $ fromList $ take n ["Enum1", "Enum2"]
+  , Or <$> genSchema (n`div`2) <*> genSchema (n`div`2)
   , genSchema 0
   ]

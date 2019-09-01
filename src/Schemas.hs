@@ -292,26 +292,28 @@ instance HasSchema a => HasSchema (HashMap Text a) where
 -- Finite schemas
 
 -- | Ensure that a 'Schema' is finite by enforcing a max depth.
---   The result is guaranteed to be a subtype of the input.
+--   The result is guaranteed to be a supertype of the input.
 finite :: Natural -> Schema -> Schema
 finite = go
  where
   go :: Natural -> Schema -> Schema
-  go 0 (Record _) = Empty
-  go 0 (Array _) = Empty
-  go 0 (Union _) = Empty
-  go 0 (StringMap _) = Empty
-  go d (Record opts) =
-    Record $ fmap (\(Field sc isOptional) -> Field (go (max 0 (pred d)) sc) isOptional) opts
-  go d (Union opts) = Union (fmap (go (max 0 (pred d))) opts)
-  go d (Array sc  ) = Array (go (max 0 (pred d)) sc)
+  go 0 _ = Empty
+  go d (Record    opts) = Record $ fromList $ mapMaybe
+    (\(fieldname, Field sc isOptional) -> case go (max 0 (pred d)) sc of
+      Empty -> Nothing
+      sc'   -> Just (fieldname, Field sc' isOptional)
+    )
+    (Map.toList opts)
+  go d (Union     opts) = Union (fmap (go (max 0 (pred d))) opts)
+  go d (Array     sc  ) = Array (go (max 0 (pred d)) sc)
   go d (StringMap sc  ) = StringMap (go (max 0 (pred d)) sc)
-  go _ other        = other
+  go d (Or a b        ) = Or (finite (d - 1) a) (finite (d - 1) b)
+  go _ other            = other
 
 -- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
 finiteValue :: Natural -> Schema -> Value -> Value
 finiteValue d sc
-  | Just cast <- finite d sc `isSubtypeOf` sc = cast
+  | Just cast <- sc `isSubtypeOf` finite d sc = cast
   | otherwise = error "bug in isSubtypeOf"
 
 -- --------------------------------------------------------------------------------
@@ -493,11 +495,12 @@ isSubtypeOf :: Schema -> Schema -> Maybe (Value -> Value)
 isSubtypeOf sub sup = go sup sub
  where
   nil = A.Object $ fromList []
-
+  go Empty         _         = pure $ const nil
   go (Array     _) Empty     = pure $ const (A.Array [])
   go (Union     _) Empty     = pure $ const nil
   go (Record    _) Empty     = pure $ const nil
   go (StringMap _) Empty     = pure $ const nil
+  go Or{}          Empty     = pure $ const nil
   go (Array a)     (Array b) = do
     f <- go a b
     pure $ over (_Array . traverse) f

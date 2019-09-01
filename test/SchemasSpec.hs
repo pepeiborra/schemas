@@ -24,8 +24,8 @@ spec = do
     prop "is the inverse of decoding" $ \(sc :: Schema) ->
       decode (encode sc) `shouldBe` Right sc
   describe "finite" $ do
-    prop "always produces a subtype" $ \(sc :: Schema) (SmallNatural size) ->
-      finite size sc `isSubtypeOf` sc `shouldSatisfy` isJust
+    prop "always produces a supertype" $ \(sc :: Schema) (SmallNatural size) ->
+      sc `isSubtypeOf` finite size sc `shouldSatisfy` isJust
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
       Record [makeField "a" Number Nothing, makeField "def" Number Nothing]
@@ -63,8 +63,8 @@ spec = do
       String `shouldNotBeSubtypeOf` Array String
   describe "examples" $ do
     describe "Schemas" $ do
-      prop "finite(schema @Schema) is a subtype of (schema @Schema)" $ \(SmallNatural n) ->
-        finite n (theSchema @Schema) `isSubtypeOf` theSchema @Schema `shouldSatisfy` isJust
+      prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
+        theSchema @Schema `isSubtypeOf` finite n (theSchema @Schema) `shouldSatisfy` isJust
     describe "Person" $ do
       it "decode is the inverse of encode (HKT)" $ do
         decodeWith hktPersonSchema (encodeWith hktPersonSchema pepe) `shouldBe` Right pepe
