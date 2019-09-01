@@ -1,62 +1,53 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE OverloadedLists       #-}
 {-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE StandaloneDeriving    #-}
 module Person3 where
 
-import           Data.Barbie
-import           Data.Functor.Identity
+import           Control.Applicative
 import           Data.Generics.Labels  ()
-import           GHC.Generics
 import           Person
 import           Person2
 import           Schemas
 
 -- | v3 adds recursive field 'spouse', which leads to cycles
-data Person3 f = Person3
-  { name      :: f String
-  , age       :: f Int
-  , addresses :: f [String]
-  , spouse    :: f (Maybe (Person3 Identity))
-  , religion  :: f (Maybe Religion)
-  , education :: f Education
+data Person3 = Person3
+  { name      :: String
+  , age       :: Int
+  , addresses :: [String]
+  , spouse    :: Maybe Person3
+  , religion  :: Maybe Religion
+  , education :: Education
   }
-  deriving Generic
-  deriving anyclass (FunctorB, ProductB, TraversableB)
+  deriving (Eq, Show)
 
-deriving instance Show (Person3 Identity)
-
-instance HasSchema (Person3 Identity) where
+instance HasSchema Person3 where
   schema = record
-          $ Person3 (required "name")
-                    (required "age")
-                    (required "addresses")
-                    (optional "spouse")
-                    (optional "religion")
-                    (required "education")
+          $ Person3 <$> field "name" Person3.name
+                    <*> field "age" Person3.age
+                    <*> field "addresses" Person3.addresses
+                    <*> optField "spouse" Person3.spouse
+                    <*> optField "religion" Person3.religion
+                    <*> (field "studies" Person3.education <|> field "education" Person3.education)
 
-laura3, pepe3 :: Person3 Identity
+laura3, pepe3 :: Person3
 
 -- pepe3 has a cycle with laura3
 pepe3 = Person3
-  (Identity "Pepe")
-  (Identity 38)
-  (Identity ["2 Edward Square", "La Mar 10"])
-  (Identity $ Just laura3)
-  (Identity Nothing)
-  (Identity $ PhD "Computer Science")
+  "Pepe"
+  38
+  ["2 Edward Square", "La Mar 10"]
+  (Just laura3)
+  Nothing
+  (PhD "Computer Science")
 
 -- laura3 has a cycle with pepe3
-laura3 = pepe3  { name      = Identity "Laura"
-                , spouse    = Identity (Just pepe3)
-                , education = Identity (Degree "English")
-                , addresses = Identity ["2 Edward Square"]
-                , religion  = Identity (Just Catholic)
+laura3 = pepe3  { name      = "Laura"
+                , spouse    = Just pepe3
+                , education = Degree "English"
+                , addresses = ["2 Edward Square"]
+                , religion  = Just Catholic
                 }
 
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B

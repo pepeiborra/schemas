@@ -42,18 +42,18 @@ instance HasSchema (Person Identity) where
 
 -- a record schema is a record of schemas
 hktPersonSchema :: TypedSchema (Person Identity)
-hktPersonSchema = record $ Person (required "name")
-                                  (required "age")
-                                  (required "addresses")
-                                  (required "studies")
+hktPersonSchema = record' $ Person (field' "name")
+                                   (field' "age")
+                                   (field' "addresses")
+                                   (field' "studies")
 
 -- Alternatively, use a free applicative to define a record schema
 applicativePersonSchema :: TypedSchema (Person Identity)
-applicativePersonSchema = record' $
-  Person <$> req "name" Person.name
-         <*> req "age" age
-         <*> req "addresses" addresses
-         <*> req "studies" studies
+applicativePersonSchema = record $
+  Person <$> field "name" Person.name
+         <*> field "age" age
+         <*> field "addresses" addresses
+         <*> field "studies" studies
 
 pepe :: Person Identity
 

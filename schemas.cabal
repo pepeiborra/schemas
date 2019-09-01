@@ -32,7 +32,6 @@ library
                      , profunctors
                      , scientific
                      , text
-                     , transformers
                      , unordered-containers
                      , vector
   hs-source-dirs:      src

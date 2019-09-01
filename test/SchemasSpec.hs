@@ -28,25 +28,25 @@ spec = do
       finite size sc `isSubtypeOf` sc `shouldSatisfy` isJust
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
-      Record [field' "a" Number Nothing, field' "def" Number Nothing]
-        `shouldBeSubtypeOf` Record [field' "def" Number Nothing]
-      Record [field' "a" Number (Just False), field' "def" Number Nothing]
-        `shouldBeSubtypeOf` Record [field' "def" Number Nothing]
-    it "subtypes cannot turn a Required field' into Optional" $ do
-      Record [field' "a" Number (Just False)]
-        `shouldNotBeSubtypeOf` Record [field' "a" Number Nothing]
-    it "subtypes can turn an Optional field' into Required" $ do
-      Record [field' "a" Number Nothing]
-        `shouldBeSubtypeOf` Record [field' "a" Number (Just False)]
+      Record [makeField "a" Number Nothing, makeField "def" Number Nothing]
+        `shouldBeSubtypeOf` Record [makeField "def" Number Nothing]
+      Record [makeField "a" Number (Just False), makeField "def" Number Nothing]
+        `shouldBeSubtypeOf` Record [makeField "def" Number Nothing]
+    it "subtypes cannot turn a Required makeField into Optional" $ do
+      Record [makeField "a" Number (Just False)]
+        `shouldNotBeSubtypeOf` Record [makeField "a" Number Nothing]
+    it "subtypes can turn an Optional makeField into Required" $ do
+      Record [makeField "a" Number Nothing]
+        `shouldBeSubtypeOf` Record [makeField "a" Number (Just False)]
     it "subtypes can relax the type of a field" $ do
-      Record [field' "a" (Array Number) Nothing]
-        `shouldBeSubtypeOf` Record [field' "a" Number Nothing]
+      Record [makeField "a" (Array Number) Nothing]
+        `shouldBeSubtypeOf` Record [makeField "a" Number Nothing]
     it "subtypes cannot remove Required fields" $ do
-      Record [field' "def" Number Nothing] `shouldNotBeSubtypeOf` Record
-        [field' "def" Number Nothing, field' "a" Number Nothing]
+      Record [makeField "def" Number Nothing] `shouldNotBeSubtypeOf` Record
+        [makeField "def" Number Nothing, makeField "a" Number Nothing]
     it "subtypes can remove Optional fields" $ do
-      Record [field' "def" Number Nothing] `shouldBeSubtypeOf` Record
-        [field' "def" Number Nothing, field' "a" Number (Just False)]
+      Record [makeField "def" Number Nothing] `shouldBeSubtypeOf` Record
+        [makeField "def" Number Nothing, makeField "a" Number (Just False)]
     it "subtypes can add enum choices" $ do
       Enum ["A", "def"] `shouldBeSubtypeOf` Enum ["def"]
     it "subtypes cannot remove enum choices" $ do
@@ -82,7 +82,6 @@ spec = do
         decode coerced `shouldBe` Right pepe
       it "pepe `as` Person2" $ do
         coerced <- maybe (fail "coerce") pure $ coerce @(Person Identity) @Person2 (encode pepe)
-        print coerced
         decode coerced `shouldBe` Right pepe2
       it "Person < Person2" $ do
         theSchema @(Person Identity)
@@ -105,8 +104,8 @@ shouldNotBeSubtypeOf a b = case a `isSubtypeOf` b of
 shouldNotLoop :: (Show a, Eq a) => IO a -> Expectation
 shouldNotLoop act = timeout 1000000 act `shouldNotReturn` Nothing
 
-field' :: a -> Schema -> Maybe Bool -> (a, Field Identity)
-field' n t isReq = (n, Field (Identity t) (Identity isReq))
+makeField :: a -> Schema -> Maybe Bool -> (a, Field)
+makeField n t isReq = (n, Field t isReq)
 
 constructor' :: a -> b -> (a, b)
 constructor' n t = (n, t)

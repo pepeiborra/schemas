@@ -33,17 +33,17 @@ module Schemas
   -- ** Construction
   , tempty
   , enum
+  -- *** Applicative record definition
+  , record'
+  , field
+  , optField
+  , fieldName
   -- *** Higher-kinded record definition
   , record
   , RecordSchema
   , RecordField(..)
-  , fieldName
-  , optional
-  , required
-  -- *** Applicative record definition
-  , record'
-  , opt
-  , req
+  , field'
+  , optField'
   -- *** Unions
   , union
   , union'
@@ -61,33 +61,33 @@ module Schemas
   )where
 
 import           Control.Alternative.Free
-import           Control.Applicative       (Alternative (..))
-import           Control.Lens              hiding (Empty, enum)
+import           Control.Applicative      (Alternative (..))
+import           Control.Lens             hiding (Empty, enum)
 import           Control.Monad
-import           Data.Aeson                (Value)
-import qualified Data.Aeson                as A
+import           Data.Aeson               (Value)
+import qualified Data.Aeson               as A
 import           Data.Aeson.Lens
 import           Data.Barbie
 import           Data.Biapplicative
 import           Data.Either
 import           Data.Functor.Compose
-import           Data.Generics.Labels      ()
-import           Data.HashMap.Strict       (HashMap)
-import qualified Data.HashMap.Strict       as Map
-import           Data.List                 (find)
-import           Data.List.NonEmpty        (NonEmpty (..))
-import qualified Data.List.NonEmpty        as NE
+import           Data.Generics.Labels     ()
+import           Data.HashMap.Strict      (HashMap)
+import qualified Data.HashMap.Strict      as Map
+import           Data.List                (find)
+import           Data.List.NonEmpty       (NonEmpty (..))
+import qualified Data.List.NonEmpty       as NE
 import           Data.Maybe
 import           Data.Scientific
-import           Data.Text                 (Text)
-import qualified Data.Text                 as T
+import           Data.Text                (Text)
+import qualified Data.Text                as T
 import           Data.Tuple
-import           Data.Vector               (Vector)
-import qualified Data.Vector               as V
-import           GHC.Exts                  (fromList)
-import           GHC.Generics              (Generic)
+import           Data.Vector              (Vector)
+import qualified Data.Vector              as V
+import           GHC.Exts                 (fromList)
+import           GHC.Generics             (Generic)
 import           Numeric.Natural
-import           Prelude                   hiding (lookup)
+import           Prelude                  hiding (lookup)
 
 -- Schemas
 -- --------------------------------------------------------------------------------
@@ -100,7 +100,7 @@ data Schema
   | Array Schema
   | StringMap Schema
   | Enum   (NonEmpty Text)
-  | Record (HashMap Text (Field Identity))
+  | Record (HashMap Text Field)
   | Union  (HashMap Text Schema)
   | Or Schema Schema
   deriving (Eq, Generic, Show)
@@ -111,19 +111,15 @@ instance Semigroup Schema where
   x <> Empty = x
   a <> b = Or a b
 
-data Field f = Field
-  { fieldSchema :: f Schema
-  , isRequired  :: f (Maybe Bool) -- ^ defaults to True
+data Field = Field
+  { fieldSchema :: Schema
+  , isRequired  :: Maybe Bool -- ^ defaults to True
   }
-  deriving (Generic)
-  deriving anyclass (FunctorB, ProductB, TraversableB)
+  deriving (Eq, Show)
 
-isRequiredField :: Field Identity -> Bool
-isRequiredField Field{isRequired = Identity (Just x)} = x
-isRequiredField _                                     = True
-
-deriving instance Eq (Field Identity)
-deriving instance Show (Field Identity)
+isRequiredField :: Field -> Bool
+isRequiredField Field{isRequired = Just x} = x
+isRequiredField _                          = True
 
 -- Typed schemas
 -- --------------------------------------------------------------------------------
@@ -176,18 +172,18 @@ type TypedSchema a = TypedSchemaFlex a a
 type RecordSchema f = f RecordField
 
 -- | Define a record schema using a higher-kinded type
-record :: (ProductB f, TraversableB f) => RecordSchema f -> TypedSchema (f Identity)
-record sc = RecordSchema sc id id
+record' :: (ProductB f, TraversableB f) => RecordSchema f -> TypedSchema (f Identity)
+record' sc = RecordSchema sc id id
 
 data RecordField a where
   Required :: Text -> TypedSchema a -> RecordField a
   Optional :: Text -> TypedSchema a -> RecordField (Maybe a)
 
-required :: HasSchema a => Text -> RecordField a
-required n = Required n schema
+field' :: HasSchema a => Text -> RecordField a
+field' n = Required n schema
 
-optional :: HasSchema a => Text -> RecordField (Maybe a)
-optional n = Optional n schema
+optField' :: HasSchema a => Text -> RecordField (Maybe a)
+optField' n = Optional n schema
 
 -- --------------------------------------------------------------------------------
 -- Applicative records
@@ -201,14 +197,14 @@ fieldName (RequiredAp x _ _) = x
 fieldName (OptionalAp x _ _) = x
 
 -- | Define a record schema using applicative syntax
-record' :: Alt (RecordFieldF a) a -> TypedSchema a
-record' sc = RecApSchema sc id id
+record :: Alt (RecordFieldF a) a -> TypedSchema a
+record sc = RecApSchema sc id id
 
-req :: HasSchema a => Text -> (from -> a) -> Alt (RecordFieldF from) a
-req n get = liftAlt (RequiredAp n get schema)
+field :: HasSchema a => Text -> (from -> a) -> Alt (RecordFieldF from) a
+field n get = liftAlt (RequiredAp n get schema)
 
-opt :: HasSchema a => Text -> (from -> Maybe a) -> Alt (RecordFieldF from) (Maybe a)
-opt n get = liftAlt (OptionalAp n get schema)
+optField :: HasSchema a => Text -> (from -> Maybe a) -> Alt (RecordFieldF from) (Maybe a)
+optField n get = liftAlt (OptionalAp n get schema)
 
 -- --------------------------------------------------------------------------------
 -- Typed Unions
@@ -270,8 +266,8 @@ instance HasSchema a => HasSchema (Vector a) where
 instance  HasSchema a => HasSchema (NonEmpty a) where
   schema = TArray schema (NE.fromList . V.toList) (V.fromList . NE.toList)
 
-instance HasSchema (Field Identity) where
-  schema = record $ Field (required "schema") (optional "required")
+instance HasSchema Field where
+  schema = record $ Field <$> field "schema" fieldSchema <*> optField "field'" isRequired
 
 instance HasSchema a => HasSchema (Identity a) where
   schema = dimap runIdentity Identity schema
@@ -306,7 +302,7 @@ finite = go
   go 0 (Union _) = Empty
   go 0 (StringMap _) = Empty
   go d (Record opts) =
-    Record $ fmap (\(Field sc isOptional) -> Field (go (max 0 (pred d)) <$> sc) isOptional) opts
+    Record $ fmap (\(Field sc isOptional) -> Field (go (max 0 (pred d)) sc) isOptional) opts
   go d (Union opts) = Union (fmap (go (max 0 (pred d))) opts)
   go d (Array sc  ) = Array (go (max 0 (pred d)) sc)
   go d (StringMap sc  ) = StringMap (go (max 0 (pred d)) sc)
@@ -332,13 +328,13 @@ extractSchema (TArray sc _ _)  = Array $ extractSchema sc
 extractSchema (TMap sc _ _)    = StringMap $ extractSchema sc
 extractSchema (RecordSchema rs _ _) = Record . fromList $ bfoldMap ((:[]) . extractField) rs
   where
-    extractField (Required n sc) = (n,) . (`Field` pure Nothing) . pure $ extractSchema sc
-    extractField (Optional n sc) = (n, Field (pure $ extractSchema sc) (pure $ Just False))
+    extractField (Required n sc) = (n,) . (`Field` Nothing) $ extractSchema sc
+    extractField (Optional n sc) = (n, Field (extractSchema sc) (Just False))
 extractSchema (RecApSchema rs _ _) = foldMap (Record . fromList) $ runAlt_ ((:[]) . (:[]) . extractField) rs
   where
-    extractField :: RecordFieldF from a -> (Text, Field Identity)
-    extractField (RequiredAp n _ sc) = (n,) . (`Field` pure Nothing) . pure $ extractSchema sc
-    extractField (OptionalAp n _ sc) = (n,) . (`Field` pure (Just False)) . pure $ extractSchema sc
+    extractField :: RecordFieldF from a -> (Text, Field)
+    extractField (RequiredAp n _ sc) = (n,) . (`Field` Nothing) $ extractSchema sc
+    extractField (OptionalAp n _ sc) = (n,) . (`Field` Just False) $ extractSchema sc
 extractSchema (UnionSchema scs _getTag) =
   Union . Map.fromList . NE.toList $ fmap (\(n, sc) -> (n, extractSchema sc)) scs
 
@@ -519,11 +515,11 @@ isSubtypeOf sub sup = go sup sub
   go (Record opts) (Record opts') = do
     forM_ (Map.toList opts) $ \(n, f@(Field _ _)) ->
       guard $ not (isRequiredField f) || Map.member n opts'
-    ff <- forM (Map.toList opts') $ \(n', f'@(Field (Identity sc') _)) -> do
+    ff <- forM (Map.toList opts') $ \(n', f'@(Field sc' _)) -> do
       case Map.lookup n' opts of
         Nothing -> do
           Just $ over (_Object) (Map.delete n')
-        Just f@(Field (Identity sc) _) -> do
+        Just f@(Field sc _) -> do
           guard (not (isRequiredField f) || isRequiredField f')
           witness <- go sc sc'
           Just $ over (_Object . ix n') witness
@@ -555,7 +551,7 @@ runAlt_ :: (Alternative g, Monoid m) => (forall a. f a -> g m) -> Alt f b -> g m
 runAlt_ f = fmap getConst . getCompose . runAlt (Compose . fmap Const . f)
 
 -- >>> data Person = Person {married :: Bool, age :: Int}
--- >>> runAlt_  (\x -> [[fieldName x]]) (Person <$> (req "married" married <|> req "foo" married) <*> (req "age" age <|> pure 0))
+-- >>> runAlt_  (\x -> [[fieldName x]]) (Person <$> (field "married" married <|> field "foo" married) <*> (field "age" age <|> pure 0))
 -- [["married","age"],["married"],["foo","age"],["foo"]]
 
 -- ----------------------------------------------

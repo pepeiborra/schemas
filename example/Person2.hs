@@ -1,14 +1,8 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE OverloadedLists       #-}
 {-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeApplications      #-}
-
 module Person2 where
 
 import           Control.Applicative
@@ -40,13 +34,13 @@ enumerate = [minBound ..]
 
 instance HasSchema Person2 where
   schema =
-    record'
+    record
       $   Person2
-      <$> req "name"      Person2.name
-      <*> req "age"       Person2.age
-      <*> req "addresses" Person2.addresses
-      <*> opt "religion"  Person2.religion
-      <*> (req "studies" Person2.education <|> req "education" Person2.education)
+      <$> field "name"      Person2.name
+      <*> field "age"       Person2.age
+      <*> field "addresses" Person2.addresses
+      <*> optField "religion"  Person2.religion
+      <*> (field "studies" Person2.education <|> field "education" Person2.education)
 
 pepe2 :: Person2
 pepe2 = Person2 "Pepe"
