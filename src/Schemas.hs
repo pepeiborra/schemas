@@ -133,7 +133,8 @@ data TypedSchemaFlex from a where
   TEnum   :: (NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlex from a
   TArray :: TypedSchema b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
   TMap   :: TypedSchema b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
-  PureSchema :: a -> TypedSchemaFlex from a
+  TOr    :: TypedSchemaFlex from a -> TypedSchemaFlex from a -> TypedSchemaFlex from a
+  TEmpty :: a -> TypedSchemaFlex from a
   RecordSchema :: (ProductB f, TraversableB f) =>
                   RecordSchema f -> (f Identity -> a) -> (from -> f Identity) -> TypedSchemaFlex from a
   RecApSchema :: Alt (RecordFieldF from') a' -> (a' -> a) -> (from -> from') -> TypedSchemaFlex from a
@@ -146,13 +147,14 @@ enum showF opts = TEnum alts (fromMaybe (error "invalid alt") . flip lookup altM
   alts   = opts <&> \x -> (showF x, x)
 
 tempty :: TypedSchema ()
-tempty = PureSchema ()
+tempty = TEmpty ()
 
 instance Functor (TypedSchemaFlex from) where
   fmap = rmap
 
 instance Profunctor TypedSchemaFlex where
-  dimap _ f (PureSchema a             ) = PureSchema (f a)
+  dimap _ f (TEmpty a             ) = TEmpty (f a)
+  dimap g f (TOr a b) = TOr (dimap g f a) (dimap g f b)
   dimap g f (TBool   tof  fromf       ) = TBool (f . tof) (fromf . g)
   dimap g f (TNumber tof  fromf       ) = TNumber (f . tof) (fromf . g)
   dimap g f (TString tof  fromf       ) = TString (f . tof) (fromf . g)
@@ -163,6 +165,15 @@ instance Profunctor TypedSchemaFlex where
   dimap g f (RecApSchema  sc tof fromf) = RecApSchema sc (f . tof) (fromf . g)
   dimap g f (UnionSchema tags getTag) =
     UnionSchema (second (dimap g f) <$> tags) (getTag . g)
+
+instance Monoid a => Monoid (TypedSchemaFlex f a) where
+  mempty = TEmpty mempty
+
+instance Semigroup a => Semigroup (TypedSchemaFlex f a) where
+  TEmpty a <> TEmpty b = TEmpty (a <> b)
+  TEmpty{} <> x = x
+  x <> TEmpty{} = x
+  a <> b = TOr a b
 
 type TypedSchema a = TypedSchemaFlex a a
 
@@ -326,7 +337,8 @@ finiteValue d sc
 -- | Extract an untyped schema that can be serialized
 extractSchema :: TypedSchemaFlex from a -> Schema
 extractSchema TBool{}          = Bool
-extractSchema PureSchema{}     = Empty
+extractSchema (TOr a b) = Or (extractSchema a) (extractSchema b)
+extractSchema TEmpty{}     = Empty
 extractSchema TNumber{}        = Number
 extractSchema TString{}        = String
 extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
@@ -353,10 +365,11 @@ theSchema = extractSchema (schema @a)
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
 encodeWith (TBool _ fromf) b = A.Bool (fromf b)
+encodeWith (TOr a b) x = encodeAlternatives [encodeWith a x, encodeWith b x]
 encodeWith (TNumber _ fromf) b = A.Number (fromf b)
 encodeWith (TString _ fromf) b = A.String (fromf b)
 encodeWith (TEnum _ fromf) b = A.String (fromf b)
-encodeWith (PureSchema _) _  = A.object []
+encodeWith (TEmpty _) _  = A.object []
 encodeWith (TArray sc _ fromf) b = A.Array (encodeWith sc <$> fromf b)
 encodeWith (TMap   sc _ fromf) b = A.Object(encodeWith sc <$> fromf b)
 encodeWith (RecApSchema rec _ fromf) x = encodeAlternatives $ fmap (A.Object . fromList) fields
@@ -380,7 +393,7 @@ encodeWith (UnionSchema [(_,sc)] _) x = encodeWith sc x
 encodeWith (UnionSchema opts fromF) x =
   case lookup tag opts of
     Nothing           -> error $ "Unknown tag: " <> show tag
-    Just PureSchema{} -> A.String tag
+    Just TEmpty{} -> A.String tag
     Just sc           -> A.object [ tag A..= encodeWith sc x ]
   where tag = fromF x
 
@@ -423,7 +436,7 @@ decodeWith = go []
   go ctx (TArray sc tof _) (A.Array x) =
     tof <$> traverse (go ("[]" : ctx) sc) x
   go ctx (TMap sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
-  go _tx (PureSchema a) _ = pure a
+  go _tx (TEmpty a) _ = pure a
   go ctx (RecordSchema rsc tof _) (A.Object fields) = tof <$> btraverse f rsc
    where
     f :: RecordField a -> Either DecodeError (Identity a)
@@ -438,12 +451,16 @@ decodeWith = go []
     f fields (RequiredAp n _ sc) = doRequiredField ctx n sc fields
     f fields (OptionalAp n _ sc) = doOptionalField ctx n sc fields
   go _tx (UnionSchema opts _) (A.String n)
-    | Just (PureSchema a) <- lookup n opts = pure a
+    | Just (TEmpty a) <- lookup n opts = pure a
   go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
     [(n, v)] -> case lookup n opts of
       Just sc -> go (n : ctx) sc v
       Nothing -> Left $ InvalidConstructor n ctx
     _ -> Left $ InvalidUnionType it ctx
+  go ctx (TOr a b) (A.Object x) = do
+    let l = Map.lookup "L" x <&> go ("L":ctx) a
+    let r = Map.lookup "R" x <&> go ("R":ctx) b
+    fromMaybe (Left $ SchemaMismatch ctx) $ l <|> r
   go ctx _ _ = Left $ SchemaMismatch ctx
 
   doRequiredField
