@@ -6,7 +6,6 @@ module SchemasSpec where
 
 import Control.Exception
 import qualified Data.Aeson as A
-import Data.Functor.Identity
 import Data.Maybe
 import Generators
 import Person
@@ -66,25 +65,21 @@ spec = do
       prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
         theSchema @Schema `isSubtypeOf` finite n (theSchema @Schema) `shouldSatisfy` isJust
     describe "Person" $ do
-      it "decode is the inverse of encode (HKT)" $ do
-        decodeWith hktPersonSchema (encodeWith hktPersonSchema pepe) `shouldBe` Right pepe
       it "decode is the inverse of encode (applicative)" $ do
-        decodeWith applicativePersonSchema (encodeWith applicativePersonSchema pepe) `shouldBe` Right pepe
-      it "applicativePersonSchema is equal to the HKT schema" $ do
-        extractSchema applicativePersonSchema `shouldBe` extractSchema hktPersonSchema
+        decode (encode pepe) `shouldBe` Right pepe
     describe "Person2" $ do
       it "Person2 < Person" $ do
         theSchema @Person2
-          `isSubtypeOf`   theSchema @(Person Identity)
+          `isSubtypeOf`   theSchema @Person
           `shouldSatisfy` isJust
       it "pepe2 `as` Person" $ do
-        coerced <- maybe (fail "coerce") pure $ coerce @Person2 @(Person Identity) (encode pepe2)
+        coerced <- maybe (fail "coerce") pure $ coerce @Person2 @Person (encode pepe2)
         decode coerced `shouldBe` Right pepe
       it "pepe `as` Person2" $ do
-        coerced <- maybe (fail "coerce") pure $ coerce @(Person Identity) @Person2 (encode pepe)
+        coerced <- maybe (fail "coerce") pure $ coerce @Person @Person2 (encode pepe)
         decode coerced `shouldBe` Right pepe2
       it "Person < Person2" $ do
-        theSchema @(Person Identity)
+        theSchema @Person
           `isSubtypeOf`   theSchema @Person2
           `shouldSatisfy` isJust
     describe "Person3" $ do

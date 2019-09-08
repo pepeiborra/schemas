@@ -9,8 +9,6 @@
 {-# LANGUAGE StandaloneDeriving    #-}
 module Person where
 
-import           Data.Barbie
-import           Data.Functor.Identity
 import           Data.Generics.Labels  ()
 import           GHC.Generics
 import           Schemas
@@ -25,43 +23,27 @@ instance HasSchema Education where
     ,alt "Degree" #_Degree
     ]
 
-data Person f = Person
-  { name      :: f String
-  , age       :: f Int
-  , addresses :: f [String]
-  , studies   :: f Education
+data Person = Person
+  { name      :: String
+  , age       :: Int
+  , addresses :: [String]
+  , studies   :: Education
   }
-  deriving Generic
-  deriving anyclass (FunctorB, ProductB, TraversableB)
+  deriving (Eq, Show)
 
-deriving instance Eq   (Person Identity)
-deriving instance Show (Person Identity)
+instance HasSchema Person where
+  schema = record $
+    Person <$> field "name" Person.name
+           <*> field "age" age
+           <*> field "addresses" addresses
+           <*> field "studies" studies
 
-instance HasSchema (Person Identity) where
-  schema = hktPersonSchema
-
--- a record schema is a record of schemas
-hktPersonSchema :: TypedSchema (Person Identity)
-hktPersonSchema = record' $ Person (field' "name")
-                                   (field' "age")
-                                   (field' "addresses")
-                                   (field' "studies")
-
--- Alternatively, use a free applicative to define a record schema
-applicativePersonSchema :: TypedSchema (Person Identity)
-applicativePersonSchema = record $
-  Person <$> field "name" Person.name
-         <*> field "age" age
-         <*> field "addresses" addresses
-         <*> field "studies" studies
-
-pepe :: Person Identity
-
+pepe :: Person
 pepe = Person
-  (Identity "Pepe")
-  (Identity 38)
-  (Identity ["2 Edward Square", "La Mar 10"])
-  (Identity $ PhD "Computer Science")
+  "Pepe"
+  38
+  ["2 Edward Square", "La Mar 10"]
+  (PhD "Computer Science")
 
 -- >>> import Data.Aeson.Encode.Pretty
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
@@ -77,7 +59,8 @@ pepe = Person
 --     "age": 38,
 --     "name": "Pepe"
 -- }
--- >>> B.putStrLn $ encodePretty $ encode (theSchema @(Person Identity))
+
+-- >>> B.putStrLn $ encodePretty $ encode (theSchema @Person)
 -- {
 --     "Record": {
 --         "studies": {
@@ -104,16 +87,16 @@ pepe = Person
 -- }
 
 -- >>> import Text.Pretty.Simple
--- >>> pPrintNoColor $ decode @(Person Identity) $ encode pepe
+-- >>> pPrintNoColor $ decode @Person $ encode pepe
 -- Right
 --     ( Person
---         { name = Identity "Pepe"
---         , age = Identity 38
---         , addresses = Identity
+--         { name = "Pepe"
+--         , age = 38
+--         , addresses =
 --             [ "2 Edward Square"
 --             , "La Mar 10"
 --             ]
---         , studies = Identity
+--         , studies =
 --             ( PhD { unPhD = "Computer Science" } )
 --         }
 --     )
@@ -145,28 +128,3 @@ pepe = Person
 --         }
 --     }
 -- }
--- >>> B.putStrLn $ encodePretty $ encodeWith applicativePersonSchema pepe
--- {
---     "studies": {
---         "PhD": "Computer Science"
---     },
---     "addresses": [
---         "2 Edward Square",
---         "La Mar 10"
---     ],
---     "age": 38,
---     "name": "Pepe"
--- }
--- >>> import Text.Pretty.Simple
--- >>> pPrintNoColor $ decodeWith applicativePersonSchema $ encodeWith applicativePersonSchema pepe-- Right 
---     ( Person 
---         { name = Identity "Pepe" 
---         , age = Identity 38
---         , addresses = Identity 
---             [ "2 Edward Square" 
---             , "La Mar 10" 
---             ] 
---         , studies = Identity 
---             ( PhD { unPhD = "Computer Science" } )
---         } 
---     )

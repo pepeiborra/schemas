@@ -52,26 +52,24 @@ laura3 = pepe3  { name      = "Laura"
 
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
--- >>> B.putStrLn $ encodePretty $ finiteEncode 2 laura3
+-- >>> B.putStrLn $ encodePretty $ finiteEncode 4 laura3
 -- {
---     "spouse": {
---         "spouse": {},
---         "education": {},
---         "addresses": [],
+--     "L": {
+--         "spouse": {
+--             "L": {}
+--         },
+--         "religion": "Catholic",
+--         "addresses": [
+--             "2 Edward Square"
+--         ],
 --         "age": 38,
---         "name": "Pepe"
---     },
---     "education": {
---         "Degree": "English"
---     },
---     "religion": "Catholic",
---     "addresses": [
---         "2 Edward Square"
---     ],
---     "age": 38,
---     "name": "Laura"
+--         "studies": {
+--             "Degree": "English"
+--         },
+--         "name": "Laura"
+--     }
 -- }
 
 -- Unpacking infinite data is not supported currently
--- >>> decode @(Person3 Identity) (finiteEncode 2 pepe3)
--- Left (MissingRecordField {name = "name", context = ["spouse","spouse"]})
+-- >>> decode @Person3 (finiteEncode 4 pepe3)
+-- Left (MissingRecordField {name = "name", context = ["spouse"]})

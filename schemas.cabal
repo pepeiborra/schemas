@@ -21,7 +21,6 @@ library
   build-depends:       base ^>=4.12.0.0
                      , aeson
                      , aeson-pretty
-                     , barbies
                      , bifunctors
                      , bytestring
                      , free
@@ -51,7 +50,6 @@ test-suite spec
                      , Generators
   build-depends:       aeson
                      , aeson-pretty
-                     , barbies
                      , base
                      , bytestring
                      , generic-lens

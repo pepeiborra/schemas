@@ -34,16 +34,10 @@ module Schemas
   , tempty
   , enum
   -- *** Applicative record definition
-  , record'
+  , record
   , field
   , optField
   , fieldName
-  -- *** Higher-kinded record definition
-  , record
-  , RecordSchema
-  , RecordField(..)
-  , field'
-  , optField'
   -- *** Unions
   , union
   , union'
@@ -67,7 +61,6 @@ import           Control.Monad
 import           Data.Aeson               (Value)
 import qualified Data.Aeson               as A
 import           Data.Aeson.Lens
-import           Data.Barbie
 import           Data.Biapplicative
 import           Data.Either
 import           Data.Functor.Compose
@@ -135,8 +128,6 @@ data TypedSchemaFlex from a where
   TMap   :: TypedSchema b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
   TOr    :: TypedSchemaFlex from a -> TypedSchemaFlex from a -> TypedSchemaFlex from a
   TEmpty :: a -> TypedSchemaFlex from a
-  RecordSchema :: (ProductB f, TraversableB f) =>
-                  RecordSchema f -> (f Identity -> a) -> (from -> f Identity) -> TypedSchemaFlex from a
   RecApSchema :: Alt (RecordFieldF from') a' -> (a' -> a) -> (from -> from') -> TypedSchemaFlex from a
   UnionSchema :: (NonEmpty (Text, TypedSchemaFlex from a)) -> (from -> Text) -> TypedSchemaFlex from a
 
@@ -161,7 +152,6 @@ instance Profunctor TypedSchemaFlex where
   dimap g f (TEnum   opts fromf       ) = TEnum (second f <$> opts) (fromf . g)
   dimap g f (TArray       sc tof fromf) = TArray sc (f . tof) (fromf . g)
   dimap g f (TMap         sc tof fromf) = TMap sc (f . tof) (fromf . g)
-  dimap g f (RecordSchema sc tof fromf) = RecordSchema sc (f . tof) (fromf . g)
   dimap g f (RecApSchema  sc tof fromf) = RecApSchema sc (f . tof) (fromf . g)
   dimap g f (UnionSchema tags getTag) =
     UnionSchema (second (dimap g f) <$> tags) (getTag . g)
@@ -176,25 +166,6 @@ instance Semigroup a => Semigroup (TypedSchemaFlex f a) where
   a <> b = TOr a b
 
 type TypedSchema a = TypedSchemaFlex a a
-
--- --------------------------------------------------------------------------------
--- Typed Records
-
-type RecordSchema f = f RecordField
-
--- | Define a record schema using a higher-kinded type
-record' :: (ProductB f, TraversableB f) => RecordSchema f -> TypedSchema (f Identity)
-record' sc = RecordSchema sc id id
-
-data RecordField a where
-  Required :: Text -> TypedSchema a -> RecordField a
-  Optional :: Text -> TypedSchema a -> RecordField (Maybe a)
-
-field' :: HasSchema a => Text -> RecordField a
-field' n = Required n schema
-
-optField' :: HasSchema a => Text -> RecordField (Maybe a)
-optField' n = Optional n schema
 
 -- --------------------------------------------------------------------------------
 -- Applicative records
@@ -344,10 +315,6 @@ extractSchema TString{}        = String
 extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array $ extractSchema sc
 extractSchema (TMap sc _ _)    = StringMap $ extractSchema sc
-extractSchema (RecordSchema rs _ _) = Record . fromList $ bfoldMap ((:[]) . extractField) rs
-  where
-    extractField (Required n sc) = (n,) . (`Field` Nothing) $ extractSchema sc
-    extractField (Optional n sc) = (n, Field (extractSchema sc) (Just False))
 extractSchema (RecApSchema rs _ _) = foldMap (Record . fromList) $ runAlt_ ((:[]) . (:[]) . extractField) rs
   where
     extractField :: RecordFieldF from a -> (Text, Field)
@@ -379,16 +346,6 @@ encodeWith (RecApSchema rec _ fromf) x = encodeAlternatives $ fmap (A.Object . f
     extractFieldAp b (RequiredAp n get sc) = Just (n, encodeWith sc  $  get b)
     extractFieldAp b (OptionalAp n get sc) = (n,) . encodeWith sc <$> get b
 
-encodeWith (RecordSchema rs _ fromf) b =
-  A.Object
-    $ fromList
-    $ bfoldMap (maybe [] (: []) . getConst)
-    $ bzipWith f rs (fromf b)
- where
-  f :: RecordField a -> Identity a -> Const (Maybe (Text, Value)) a
-  f (Required _ (TArray _ _ toArray)) (Identity (toArray -> [])) = Const Nothing
-  f (Required n sc) x = Const $ Just (n, encodeWith sc $ runIdentity x)
-  f (Optional n sc) x = Const $ (n, ) . encodeWith sc <$> runIdentity x
 encodeWith (UnionSchema [(_,sc)] _) x = encodeWith sc x
 encodeWith (UnionSchema opts fromF) x =
   case lookup tag opts of
@@ -437,11 +394,6 @@ decodeWith = go []
     tof <$> traverse (go ("[]" : ctx) sc) x
   go ctx (TMap sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
   go _tx (TEmpty a) _ = pure a
-  go ctx (RecordSchema rsc tof _) (A.Object fields) = tof <$> btraverse f rsc
-   where
-    f :: RecordField a -> Either DecodeError (Identity a)
-    f (Required n sc) = pure <$> doRequiredField ctx n sc fields
-    f (Optional n sc) = pure <$> doOptionalField ctx n sc fields
   go ctx (RecApSchema rec tof _) o@A.Object{}
     | (A.Object fields, encodedPath) <- decodeAlternatives o = tof <$> fromMaybe
       (Left $ InvalidAlt ctx encodedPath)
