@@ -15,6 +15,7 @@
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE ViewPatterns          #-}
+{-# OPTIONS -Wno-name-shadowing    #-}
 module Schemas
   (
   -- * Schemas
@@ -128,7 +129,7 @@ data TypedSchemaFlex from a where
   TMap   :: TypedSchema b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
   TOr    :: TypedSchemaFlex from a -> TypedSchemaFlex from a -> TypedSchemaFlex from a
   TEmpty :: a -> TypedSchemaFlex from a
-  RecApSchema :: Alt (RecordFieldF from') a' -> (a' -> a) -> (from -> from') -> TypedSchemaFlex from a
+  RecApSchema :: Alt (RecordFieldF from) a -> TypedSchemaFlex from a
   UnionSchema :: (NonEmpty (Text, TypedSchemaFlex from a)) -> (from -> Text) -> TypedSchemaFlex from a
 
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
@@ -144,17 +145,16 @@ instance Functor (TypedSchemaFlex from) where
   fmap = rmap
 
 instance Profunctor TypedSchemaFlex where
-  dimap _ f (TEmpty a             ) = TEmpty (f a)
-  dimap g f (TOr a b) = TOr (dimap g f a) (dimap g f b)
-  dimap g f (TBool   tof  fromf       ) = TBool (f . tof) (fromf . g)
-  dimap g f (TNumber tof  fromf       ) = TNumber (f . tof) (fromf . g)
-  dimap g f (TString tof  fromf       ) = TString (f . tof) (fromf . g)
-  dimap g f (TEnum   opts fromf       ) = TEnum (second f <$> opts) (fromf . g)
-  dimap g f (TArray       sc tof fromf) = TArray sc (f . tof) (fromf . g)
-  dimap g f (TMap         sc tof fromf) = TMap sc (f . tof) (fromf . g)
-  dimap g f (RecApSchema  sc tof fromf) = RecApSchema sc (f . tof) (fromf . g)
-  dimap g f (UnionSchema tags getTag) =
-    UnionSchema (second (dimap g f) <$> tags) (getTag . g)
+    dimap _ f (TEmpty a                ) = TEmpty (f a)
+    dimap g f (TOr       a    b        ) = TOr (dimap g f a) (dimap g f b)
+    dimap g f (TBool     tof  fromf    ) = TBool (f . tof) (fromf . g)
+    dimap g f (TNumber   tof  fromf    ) = TNumber (f . tof) (fromf . g)
+    dimap g f (TString   tof  fromf    ) = TString (f . tof) (fromf . g)
+    dimap g f (TEnum     opts fromf    ) = TEnum (second f <$> opts) (fromf . g)
+    dimap g f (TArray      sc tof fromf) = TArray sc (f . tof) (fromf . g)
+    dimap g f (TMap        sc tof fromf) = TMap sc (f . tof) (fromf . g)
+    dimap g f (RecApSchema sc) = RecApSchema (f <$> hoistAlt (dimap g id) sc)
+    dimap g f (UnionSchema tags getTag ) = UnionSchema (second (dimap g f) <$> tags) (getTag . g)
 
 instance Monoid a => Monoid (TypedSchemaFlex f a) where
   mempty = TEmpty mempty
@@ -171,22 +171,26 @@ type TypedSchema a = TypedSchemaFlex a a
 -- Applicative records
 
 data RecordFieldF from a where
-  RequiredAp :: Text -> (from -> a) -> TypedSchema a -> RecordFieldF from a
-  OptionalAp :: Text -> (from -> Maybe a) -> TypedSchema a -> RecordFieldF from (Maybe a)
+  RequiredAp :: Text -> TypedSchemaFlex from a -> RecordFieldF from a
+  OptionalAp :: Text -> TypedSchemaFlex a a -> (from -> Maybe a) -> (Maybe a -> r) -> RecordFieldF from r
+
+instance Profunctor RecordFieldF where
+  dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
+  dimap f g (OptionalAp name sc from to) = OptionalAp name sc (from . f) (g . to)
 
 fieldName :: RecordFieldF from a -> Text
-fieldName (RequiredAp x _ _) = x
-fieldName (OptionalAp x _ _) = x
+fieldName (RequiredAp x _) = x
+fieldName (OptionalAp x _ _ _) = x
 
 -- | Define a record schema using applicative syntax
 record :: Alt (RecordFieldF a) a -> TypedSchema a
-record sc = RecApSchema sc id id
+record = RecApSchema
 
 field :: HasSchema a => Text -> (from -> a) -> Alt (RecordFieldF from) a
-field n get = liftAlt (RequiredAp n get schema)
+field n get = liftAlt (RequiredAp n (dimap get id schema))
 
-optField :: HasSchema a => Text -> (from -> Maybe a) -> Alt (RecordFieldF from) (Maybe a)
-optField n get = liftAlt (OptionalAp n get schema)
+optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> Alt (RecordFieldF from) (Maybe a)
+optField n get = liftAlt (OptionalAp n schema get id)
 
 -- --------------------------------------------------------------------------------
 -- Typed Unions
@@ -315,11 +319,11 @@ extractSchema TString{}        = String
 extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array $ extractSchema sc
 extractSchema (TMap sc _ _)    = StringMap $ extractSchema sc
-extractSchema (RecApSchema rs _ _) = foldMap (Record . fromList) $ runAlt_ ((:[]) . (:[]) . extractField) rs
+extractSchema (RecApSchema rs) = foldMap (Record . fromList) $ runAlt_ ((:[]) . (:[]) . extractField) rs
   where
     extractField :: RecordFieldF from a -> (Text, Field)
-    extractField (RequiredAp n _ sc) = (n,) . (`Field` Nothing) $ extractSchema sc
-    extractField (OptionalAp n _ sc) = (n,) . (`Field` Just False) $ extractSchema sc
+    extractField (RequiredAp n sc) = (n,) . (`Field` Nothing) $ extractSchema sc
+    extractField (OptionalAp n sc _ _) = (n,) . (`Field` Just False) $ extractSchema sc
 extractSchema (UnionSchema scs _getTag) =
   Union . Map.fromList . NE.toList $ fmap (\(n, sc) -> (n, extractSchema sc)) scs
 
@@ -331,28 +335,27 @@ theSchema = extractSchema (schema @a)
 
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
-encodeWith (TBool _ fromf) b = A.Bool (fromf b)
+encodeWith (TBool   _ fromf        ) b = A.Bool (fromf b)
 encodeWith (TOr a b) x = encodeAlternatives [encodeWith a x, encodeWith b x]
-encodeWith (TNumber _ fromf) b = A.Number (fromf b)
-encodeWith (TString _ fromf) b = A.String (fromf b)
-encodeWith (TEnum _ fromf) b = A.String (fromf b)
-encodeWith (TEmpty _) _  = A.object []
-encodeWith (TArray sc _ fromf) b = A.Array (encodeWith sc <$> fromf b)
-encodeWith (TMap   sc _ fromf) b = A.Object(encodeWith sc <$> fromf b)
-encodeWith (RecApSchema rec _ fromf) x = encodeAlternatives $ fmap (A.Object . fromList) fields
-  where
-    fields = runAlt_ (maybe [[]] ((:[]) . (:[])) . extractFieldAp (fromf x)) rec
+encodeWith (TNumber _ fromf        ) b = A.Number (fromf b)
+encodeWith (TString _ fromf        ) b = A.String (fromf b)
+encodeWith (TEnum   _ fromf        ) b = A.String (fromf b)
+encodeWith (TEmpty _               ) _ = A.object []
+encodeWith (TArray      sc  _ fromf) b = A.Array (encodeWith sc <$> fromf b)
+encodeWith (TMap        sc  _ fromf) b = A.Object (encodeWith sc <$> fromf b)
+encodeWith (RecApSchema rec) x = encodeAlternatives $ fmap (A.Object . fromList) fields
+            where
+                fields = runAlt_ (maybe [[]] ((: []) . (: [])) . extractFieldAp x) rec
 
-    extractFieldAp b (RequiredAp n get sc) = Just (n, encodeWith sc  $  get b)
-    extractFieldAp b (OptionalAp n get sc) = (n,) . encodeWith sc <$> get b
+                extractFieldAp b (RequiredAp n sc  ) = Just (n, encodeWith sc b)
+                extractFieldAp b (OptionalAp n sc from _) = (n,) . encodeWith sc <$> from b
 
-encodeWith (UnionSchema [(_,sc)] _) x = encodeWith sc x
-encodeWith (UnionSchema opts fromF) x =
-  case lookup tag opts of
-    Nothing           -> error $ "Unknown tag: " <> show tag
-    Just TEmpty{} -> A.String tag
-    Just sc           -> A.object [ tag A..= encodeWith sc x ]
-  where tag = fromF x
+encodeWith (UnionSchema [(_, sc)] _    ) x = encodeWith sc x
+encodeWith (UnionSchema opts      fromF) x = case lookup tag opts of
+            Nothing       -> error $ "Unknown tag: " <> show tag
+            Just TEmpty{} -> A.String tag
+            Just sc       -> A.object [tag A..= encodeWith sc x]
+            where tag = fromF x
 
 encodeAlternatives :: [Value] -> Value
 encodeAlternatives [] = error "empty"
@@ -381,10 +384,10 @@ data DecodeError
   deriving (Eq, Show)
 
 -- | Given a JSON 'Value' and a typed schema, extract a Haskell value
-decodeWith :: TypedSchema a -> Value -> Either DecodeError a
+decodeWith :: TypedSchemaFlex from a -> Value -> Either DecodeError a
 decodeWith = go []
  where
-  go :: [Text] -> TypedSchema a -> Value -> Either DecodeError a
+  go :: [Text] -> TypedSchemaFlex from a -> Value -> Either DecodeError a
   go _tx (TBool   tof _) (A.Bool   x) = pure $ tof x
   go _tx (TNumber tof _) (A.Number x) = pure $ tof x
   go _tx (TString tof _) (A.String x) = pure $ tof x
@@ -394,14 +397,17 @@ decodeWith = go []
     tof <$> traverse (go ("[]" : ctx) sc) x
   go ctx (TMap sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
   go _tx (TEmpty a) _ = pure a
-  go ctx (RecApSchema rec tof _) o@A.Object{}
-    | (A.Object fields, encodedPath) <- decodeAlternatives o = tof <$> fromMaybe
+  go ctx (RecApSchema rec) o@A.Object{}
+    | (A.Object fields, encodedPath) <- decodeAlternatives o = fromMaybe
       (Left $ InvalidAlt ctx encodedPath)
       (selectPath encodedPath (getCompose $ runAlt (Compose . (: []) . f fields) rec))
    where
     f :: A.Object -> RecordFieldF from a -> Either DecodeError a
-    f fields (RequiredAp n _ sc) = doRequiredField ctx n sc fields
-    f fields (OptionalAp n _ sc) = doOptionalField ctx n sc fields
+    f fields (RequiredAp n sc) = doRequiredField ctx n sc fields
+    f fields (OptionalAp n sc _ to) = case Map.lookup n fields of
+        Just v  -> to . Just <$> go (n : ctx) sc v
+        Nothing -> pure $ to Nothing
+
   go _tx (UnionSchema opts _) (A.String n)
     | Just (TEmpty a) <- lookup n opts = pure a
   go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
@@ -418,7 +424,7 @@ decodeWith = go []
   doRequiredField
     :: [Text]
     -> Text
-    -> TypedSchema b
+    -> TypedSchemaFlex from b
     -> HashMap Text Value
     -> Either DecodeError b
   doRequiredField ctx n sc fields = case Map.lookup n fields of
@@ -426,16 +432,6 @@ decodeWith = go []
     Nothing -> case sc of
       TArray _ tof' _ -> pure $ tof' []
       _               -> Left $ MissingRecordField n ctx
-
-  doOptionalField
-    :: [Text]
-    -> Text
-    -> TypedSchema b
-    -> HashMap Text Value
-    -> Either DecodeError (Maybe b)
-  doOptionalField ctx n sc fields = case Map.lookup n fields of
-    Just v  -> pure <$> go (n : ctx) sc v
-    Nothing -> pure Nothing
 
 decode :: HasSchema a => Value -> Either DecodeError a
 decode = decodeWith schema
@@ -466,49 +462,53 @@ selectPath _ _                 = Nothing
 --   Nothing
 isSubtypeOf :: Schema -> Schema -> Maybe (Value -> Value)
 isSubtypeOf sub sup = go sup sub
- where
-  nil = A.Object $ fromList []
-  go Empty         _         = pure $ const nil
-  go (Array     _) Empty     = pure $ const (A.Array [])
-  go (Union     _) Empty     = pure $ const nil
-  go (Record    _) Empty     = pure $ const nil
-  go (StringMap _) Empty     = pure $ const nil
-  go Or{}          Empty     = pure $ const nil
-  go (Array a)     (Array b) = do
-    f <- go a b
-    pure $ over (_Array . traverse) f
-  go (StringMap a) (StringMap b) = do
-    f <- go a b
-    pure $ over (_Object . traverse) f
-  go a (Array b) | a == b = Just (A.Array . fromList . (: []))
-  go (Enum opts) (Enum opts') | all (`elem` opts') opts = Just id
-  go (Union opts) (Union opts') = do
-    ff <- forM (Map.toList opts) $ \(n, sc) -> do
-      sc' <- Map.lookup n opts'
-      f   <- go sc sc'
-      return $ over (_Object . ix n) f
-    return (foldr (.) id ff)
-  go (Record opts) (Record opts') = do
-    forM_ (Map.toList opts) $ \(n, f@(Field _ _)) ->
-      guard $ not (isRequiredField f) || Map.member n opts'
-    ff <- forM (Map.toList opts') $ \(n', f'@(Field sc' _)) -> do
-      case Map.lookup n' opts of
-        Nothing -> do
-          Just $ over (_Object) (Map.delete n')
-        Just f@(Field sc _) -> do
-          guard (not (isRequiredField f) || isRequiredField f')
-          witness <- go sc sc'
-          Just $ over (_Object . ix n') witness
-    return (foldr (.) id ff)
-  -- go (Or a b) c = over (_Object . ix "L") <$> go a c
-  --             <|> over (_Object . ix "R") <$> go b c
-  go a (Or b c) =
-    (go a b <&> \f -> fromMaybe (error "bad input") . preview (_Object . ix "L" . to f)) <|>
-    (go a c <&> \f -> fromMaybe (error "bad input") . preview (_Object . ix "R" . to f))
-  go (Or a b) c = (go a c <&> ((A.object . (:[]) . ("L" A..=)) .))
-              <|> (go b c <&> ((A.object . (:[]) . ("R" A..=)) .))
-  go a b | a == b = pure id
-  go _ _          = Nothing
+    where
+        nil = A.Object $ fromList []
+        go Empty         _         = pure $ const nil
+        go (Array     _) Empty     = pure $ const (A.Array [])
+        go (Union     _) Empty     = pure $ const nil
+        go (Record    _) Empty     = pure $ const nil
+        go (StringMap _) Empty     = pure $ const nil
+        go Or{}          Empty     = pure $ const nil
+        go (Array a)     (Array b) = do
+            f <- go a b
+            pure $ over (_Array . traverse) f
+        go (StringMap a) (StringMap b) = do
+            f <- go a b
+            pure $ over (_Object . traverse) f
+        go a (Array b) | a == b                               = Just (A.Array . fromList . (: []))
+        go (Enum opts) (Enum opts') | all (`elem` opts') opts = Just id
+        go (Union opts) (Union opts')                         = do
+            ff <- forM (Map.toList opts) $ \(n, sc) -> do
+                sc' <- Map.lookup n opts'
+                f   <- go sc sc'
+                return $ over (_Object . ix n) f
+            return (foldr (.) id ff)
+        go (Record opts) (Record opts') = do
+            forM_ (Map.toList opts)
+                $ \(n, f@(Field _ _)) -> guard $ not (isRequiredField f) || Map.member n opts'
+            ff <- forM (Map.toList opts') $ \(n', f'@(Field sc' _)) -> do
+                case Map.lookup n' opts of
+                    Nothing -> do
+                        Just $ over (_Object) (Map.delete n')
+                    Just f@(Field sc _) -> do
+                        guard (not (isRequiredField f) || isRequiredField f')
+                        witness <- go sc sc'
+                        Just $ over (_Object . ix n') witness
+            return (foldr (.) id ff)
+        go a (Or b c) =
+            (go a b <&> \f -> fromMaybe (error "cannot upcast an alternative: missing L value")
+                    . preview (_Object . ix "L" . to f)
+                )
+                <|> (go a c <&> \f ->
+                        fromMaybe (error "cannot upcast an alternative: missing R value")
+                            . preview (_Object . ix "R" . to f)
+                    )
+        go (Or a b) c =
+            (go a c <&> ((A.object . (: []) . ("L" A..=)) .))
+                <|> (go b c <&> ((A.object . (: []) . ("R" A..=)) .))
+        go a b | a == b = pure id
+        go _ _          = Nothing
 
 -- | Returns 'Nothing' if 'sub' is not a subtype of 'sup'
 coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
