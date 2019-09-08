@@ -129,7 +129,7 @@ data TypedSchemaFlex from a where
   TMap   :: TypedSchema b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
   TOr    :: TypedSchemaFlex from a -> TypedSchemaFlex from a -> TypedSchemaFlex from a
   TEmpty :: a -> TypedSchemaFlex from a
-  RecApSchema :: Alt (RecordFieldF from) a -> TypedSchemaFlex from a
+  RecordSchema :: Alt (RecordField from) a -> TypedSchemaFlex from a
   UnionSchema :: (NonEmpty (Text, TypedSchemaFlex from a)) -> (from -> Text) -> TypedSchemaFlex from a
 
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
@@ -153,7 +153,7 @@ instance Profunctor TypedSchemaFlex where
     dimap g f (TEnum     opts fromf    ) = TEnum (second f <$> opts) (fromf . g)
     dimap g f (TArray      sc tof fromf) = TArray sc (f . tof) (fromf . g)
     dimap g f (TMap        sc tof fromf) = TMap sc (f . tof) (fromf . g)
-    dimap g f (RecApSchema sc) = RecApSchema (f <$> hoistAlt (dimap g id) sc)
+    dimap g f (RecordSchema sc) = RecordSchema (f <$> hoistAlt (dimap g id) sc)
     dimap g f (UnionSchema tags getTag ) = UnionSchema (second (dimap g f) <$> tags) (getTag . g)
 
 instance Monoid a => Monoid (TypedSchemaFlex f a) where
@@ -170,26 +170,26 @@ type TypedSchema a = TypedSchemaFlex a a
 -- --------------------------------------------------------------------------------
 -- Applicative records
 
-data RecordFieldF from a where
-  RequiredAp :: Text -> TypedSchemaFlex from a -> RecordFieldF from a
-  OptionalAp :: Text -> TypedSchemaFlex a a -> (from -> Maybe a) -> (Maybe a -> r) -> RecordFieldF from r
+data RecordField from a where
+  RequiredAp :: Text -> TypedSchemaFlex from a -> RecordField from a
+  OptionalAp :: Text -> TypedSchemaFlex a a -> (from -> Maybe a) -> (Maybe a -> r) -> RecordField from r
 
-instance Profunctor RecordFieldF where
+instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
   dimap f g (OptionalAp name sc from to) = OptionalAp name sc (from . f) (g . to)
 
-fieldName :: RecordFieldF from a -> Text
+fieldName :: RecordField from a -> Text
 fieldName (RequiredAp x _) = x
 fieldName (OptionalAp x _ _ _) = x
 
 -- | Define a record schema using applicative syntax
-record :: Alt (RecordFieldF a) a -> TypedSchema a
-record = RecApSchema
+record :: Alt (RecordField a) a -> TypedSchema a
+record = RecordSchema
 
-field :: HasSchema a => Text -> (from -> a) -> Alt (RecordFieldF from) a
+field :: HasSchema a => Text -> (from -> a) -> Alt (RecordField from) a
 field n get = liftAlt (RequiredAp n (dimap get id schema))
 
-optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> Alt (RecordFieldF from) (Maybe a)
+optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> Alt (RecordField from) (Maybe a)
 optField n get = liftAlt (OptionalAp n schema get id)
 
 -- --------------------------------------------------------------------------------
@@ -319,9 +319,9 @@ extractSchema TString{}        = String
 extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array $ extractSchema sc
 extractSchema (TMap sc _ _)    = StringMap $ extractSchema sc
-extractSchema (RecApSchema rs) = foldMap (Record . fromList) $ runAlt_ ((:[]) . (:[]) . extractField) rs
+extractSchema (RecordSchema rs) = foldMap (Record . fromList) $ runAlt_ ((:[]) . (:[]) . extractField) rs
   where
-    extractField :: RecordFieldF from a -> (Text, Field)
+    extractField :: RecordField from a -> (Text, Field)
     extractField (RequiredAp n sc) = (n,) . (`Field` Nothing) $ extractSchema sc
     extractField (OptionalAp n sc _ _) = (n,) . (`Field` Just False) $ extractSchema sc
 extractSchema (UnionSchema scs _getTag) =
@@ -343,7 +343,7 @@ encodeWith (TEnum   _ fromf        ) b = A.String (fromf b)
 encodeWith (TEmpty _               ) _ = A.object []
 encodeWith (TArray      sc  _ fromf) b = A.Array (encodeWith sc <$> fromf b)
 encodeWith (TMap        sc  _ fromf) b = A.Object (encodeWith sc <$> fromf b)
-encodeWith (RecApSchema rec) x = encodeAlternatives $ fmap (A.Object . fromList) fields
+encodeWith (RecordSchema rec) x = encodeAlternatives $ fmap (A.Object . fromList) fields
             where
                 fields = runAlt_ (maybe [[]] ((: []) . (: [])) . extractFieldAp x) rec
 
@@ -397,12 +397,12 @@ decodeWith = go []
     tof <$> traverse (go ("[]" : ctx) sc) x
   go ctx (TMap sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
   go _tx (TEmpty a) _ = pure a
-  go ctx (RecApSchema rec) o@A.Object{}
+  go ctx (RecordSchema rec) o@A.Object{}
     | (A.Object fields, encodedPath) <- decodeAlternatives o = fromMaybe
       (Left $ InvalidAlt ctx encodedPath)
       (selectPath encodedPath (getCompose $ runAlt (Compose . (: []) . f fields) rec))
    where
-    f :: A.Object -> RecordFieldF from a -> Either DecodeError a
+    f :: A.Object -> RecordField from a -> Either DecodeError a
     f fields (RequiredAp n sc) = doRequiredField ctx n sc fields
     f fields (OptionalAp n sc _ to) = case Map.lookup n fields of
         Just v  -> to . Just <$> go (n : ctx) sc v
