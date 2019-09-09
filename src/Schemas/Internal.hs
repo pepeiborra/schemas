@@ -16,44 +16,7 @@
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE ViewPatterns          #-}
 {-# OPTIONS -Wno-name-shadowing    #-}
-module Schemas
-  (
-  -- * Schemas
-    Field(..)
-  , Schema(..)
-  -- ** functions for working with schemas
-  , isSubtypeOf
-  , coerce
-  , finite
-  -- * Typed schemas
-  , TypedSchema
-  , TypedSchemaFlex
-  , HasSchema(..)
-  , theSchema
-  , extractSchema
-  -- ** Construction
-  , tempty
-  , enum
-  -- *** Applicative record definition
-  , record
-  , field
-  , optField
-  , fieldName
-  -- *** Unions
-  , union
-  , union'
-  , Alt(..)
-  , alt
-  -- * Encoding
-  , encode
-  , decode
-  , encodeWith
-  , decodeWith
-  , DecodeError(..)
-  -- * working with recursive schemas
-  , finiteValue
-  , finiteEncode
-  )where
+module Schemas.Internal where
 
 import           Control.Alternative.Free
 import           Control.Applicative      (Alternative (..))
