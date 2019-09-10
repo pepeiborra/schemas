@@ -81,35 +81,35 @@ pepe2 = Person2 "Pepe"
 -- Person2 is a subtype of Person therefore we can encode a Person2 as a Person
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
--- >>> coerce21 = coerce @Person2 @Person
--- >>> B.putStrLn $ encodePretty $ coerce21 $ encode pepe2
+-- >>> B.putStrLn $ encodePretty $ encodeTo (theSchema @Person) <*> pure pepe2
 -- {
---     "education": {
---         "PhD": "Computer Science"
---     },
 --     "addresses": [
 --         "2 Edward Square",
 --         "La Mar 10"
 --     ],
 --     "age": 38,
+--     "studies": {
+--         "PhD": "Computer Science"
+--     },
 --     "name": "Pepe"
 -- }
 
 
 -- We can also upgrade a Person into a Person2, because the new field is optional
 -- >>> import Text.Pretty.Simple
--- >>> coerce12 = coerce @Person @(Person2)
--- >>> pPrintNoColor $ decode @Person (coerce12 $ encode pepe)
--- Right
---     ( Person
---         { name = "Pepe"
---         , age = 38
---         , addresses =
---             [ "2 Edward Square"
---             , "La Mar 10"
---             ]
---         , education =
---             ( PhD { unPhD = "Computer Science" } )
---         }
+-- >>> pPrintNoColor $ decodeFrom @Person2 (theSchema @Person) <*> pure (encode pepe)
+-- Just
+--     ( Right
+--         ( Person2
+--             { name = "Pepe"
+--             , age = 38
+--             , addresses =
+--                 [ "2 Edward Square"
+--                 , "La Mar 10"
+--                 ]
+--             , religion = Nothing
+--             , education = PhD { unPhD = "Computer Science" }
+--             }
+--         )
 --     )
 

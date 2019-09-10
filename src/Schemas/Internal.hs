@@ -332,6 +332,14 @@ encodeAlternatives (x:xx) = A.object ["L" A..= x, "R" A..= encodeAlternatives xx
 encode :: HasSchema a => a -> Value
 encode = encodeWith schema
 
+encodeToWith :: TypedSchema a -> Schema -> Maybe (a -> Value)
+encodeToWith sc target = case extractSchema sc `isSubtypeOf` target of
+  Just cast -> Just $ cast . encodeWith sc
+  Nothing   -> Nothing
+
+encodeTo :: HasSchema a => Schema -> Maybe (a -> Value)
+encodeTo = encodeToWith schema
+
 -- | Encode a value into a finite representation by enforcing a max depth
 finiteEncode :: forall a. HasSchema a => Natural -> a -> Value
 finiteEncode d = finiteValue d (theSchema @a) . encode
@@ -401,6 +409,14 @@ decodeWith = go []
 
 decode :: HasSchema a => Value -> Either DecodeError a
 decode = decodeWith schema
+
+decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either DecodeError a)
+decodeFromWith sc source = case source `isSubtypeOf` extractSchema sc of
+  Just cast -> Just $ decodeWith sc . cast
+  Nothing -> Nothing
+
+decodeFrom :: HasSchema a => Schema -> Maybe (Value -> Either DecodeError a)
+decodeFrom = decodeFromWith schema
 
 type Path = [Bool]
 

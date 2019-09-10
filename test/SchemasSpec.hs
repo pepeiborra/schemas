@@ -73,11 +73,13 @@ spec = do
           `isSubtypeOf`   theSchema @Person
           `shouldSatisfy` isJust
       it "pepe2 `as` Person" $ do
-        coerced <- maybe (fail "coerce") pure $ coerce @Person2 @Person (encode pepe2)
-        decode coerced `shouldBe` Right pepe
+        let encoder = encodeTo (theSchema @Person)
+        encoder `shouldSatisfy` isJust
+        decode (fromJust encoder pepe2) `shouldBe` Right pepe
       it "pepe `as` Person2" $ do
-        coerced <- maybe (fail "coerce") pure $ coerce @Person @Person2 (encode pepe)
-        decode coerced `shouldBe` Right pepe2
+        let decoder = decodeFrom (theSchema @Person)
+        decoder `shouldSatisfy` isJust
+        fromJust decoder (encode pepe) `shouldBe` Right pepe2
       it "Person < Person2" $ do
         theSchema @Person
           `isSubtypeOf`   theSchema @Person2

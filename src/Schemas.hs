@@ -29,8 +29,12 @@ module Schemas
   -- * Encoding
   , encode
   , decode
+  , encodeTo
+  , decodeFrom
   , encodeWith
   , decodeWith
+  , encodeToWith
+  , decodeFromWith
   , DecodeError(..)
   -- * working with recursive schemas
   , finiteValue
