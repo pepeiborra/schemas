@@ -17,6 +17,7 @@ library
   exposed-modules:
     Schemas
     Schemas.Internal
+    Schemas.SOP
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.12.0.0
@@ -26,6 +27,7 @@ library
                      , bytestring
                      , free
                      , generic-lens
+                     , generics-sop
                      , lens
                      , lens-aeson
                      , pretty-simple
@@ -54,6 +56,7 @@ test-suite spec
                      , base
                      , bytestring
                      , generic-lens
+                     , generics-sop
                      , hspec
                      , pretty-simple
                      , QuickCheck

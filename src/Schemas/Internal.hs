@@ -236,7 +236,10 @@ instance HasSchema Schema where
     ]
 
 instance (HasSchema a, HasSchema b) => HasSchema (a,b) where
-  schema = record $ (,) <$> field "fst" fst <*> field "snd" snd
+  schema = record $ (,) <$> field "$1" fst <*> field "$2" snd
+
+instance (HasSchema a, HasSchema b, HasSchema c) => HasSchema (a,b,c) where
+  schema = record $ (,,) <$> field "$1" (view _1) <*> field "$2" (view _2) <*> field "$3" (view _3)
 
 instance HasSchema a => HasSchema (HashMap Text a) where
   schema = TMap schema id id

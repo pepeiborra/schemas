@@ -11,7 +11,9 @@ module Person where
 
 import           Data.Generics.Labels  ()
 import           GHC.Generics
+import qualified Generics.SOP as SOP
 import           Schemas
+import           Schemas.SOP
 
 data Education = NoEducation | Degree {unDegree :: String} | PhD {unPhD :: String}
   deriving (Generic, Eq, Show)
@@ -29,14 +31,11 @@ data Person = Person
   , addresses :: [String]
   , studies   :: Education
   }
-  deriving (Eq, Show)
+  deriving (Generic, Eq, Show)
+  deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 instance HasSchema Person where
-  schema = record $
-    Person <$> field "name" Person.name
-           <*> field "age" age
-           <*> field "addresses" addresses
-           <*> field "studies" studies
+  schema = gSchema defOptions
 
 pepe :: Person
 pepe = Person
