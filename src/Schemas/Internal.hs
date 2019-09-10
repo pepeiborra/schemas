@@ -29,6 +29,7 @@ import           Data.Biapplicative
 import           Data.Either
 import           Data.Functor.Compose
 import           Data.Generics.Labels     ()
+import           Data.Hashable
 import           Data.HashMap.Strict      (HashMap)
 import qualified Data.HashMap.Strict      as Map
 import           Data.List                (find)
@@ -36,7 +37,7 @@ import           Data.List.NonEmpty       (NonEmpty (..))
 import qualified Data.List.NonEmpty       as NE
 import           Data.Maybe
 import           Data.Scientific
-import           Data.Text                (Text)
+import           Data.Text                (Text, pack, unpack)
 import qualified Data.Text                as T
 import           Data.Tuple
 import           Data.Vector              (Vector)
@@ -100,6 +101,9 @@ enum showF opts = TEnum alts (fromMaybe (error "invalid alt") . flip lookup altM
  where
   altMap = fmap swap $ alts --TODO fast lookup
   alts   = opts <&> \x -> (showF x, x)
+
+stringMap :: TypedSchema a -> TypedSchema (HashMap Text a)
+stringMap sc = TMap sc id id
 
 tempty :: TypedSchema ()
 tempty = TEmpty ()
@@ -241,9 +245,22 @@ instance (HasSchema a, HasSchema b) => HasSchema (a,b) where
 instance (HasSchema a, HasSchema b, HasSchema c) => HasSchema (a,b,c) where
   schema = record $ (,,) <$> field "$1" (view _1) <*> field "$2" (view _2) <*> field "$3" (view _3)
 
-instance HasSchema a => HasSchema (HashMap Text a) where
-  schema = TMap schema id id
+instance (Eq key, Hashable key, HasSchema a, Key key) => HasSchema (HashMap key a) where
+  schema = dimap toKeyed fromKeyed $ stringMap schema
+    where
+      fromKeyed :: HashMap Text a -> HashMap key a
+      fromKeyed = Map.fromList . map (first $ view (from $ keyIso @key)) . Map.toList
+      toKeyed :: HashMap key a -> HashMap Text a
+      toKeyed = Map.fromList . map (first $ view (keyIso @key)) . Map.toList
 
+class Key a where
+  keyIso :: Iso' a Text
+
+instance Key String where
+  keyIso = iso pack unpack
+
+instance Key Text where
+  keyIso = id
 -- --------------------------------------------------------------------------------
 -- Finite schemas
 

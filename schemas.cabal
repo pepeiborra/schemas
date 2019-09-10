@@ -27,7 +27,8 @@ library
                      , bytestring
                      , free
                      , generic-lens
-                     , generics-sop
+                     , generics-sop >= 0.5.0.0
+                     , hashable
                      , lens
                      , lens-aeson
                      , pretty-simple

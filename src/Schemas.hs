@@ -16,6 +16,8 @@ module Schemas
   -- ** Construction
   , tempty
   , enum
+  , stringMap
+  , Key(..)
   -- *** Applicative record definition
   , record
   , field
