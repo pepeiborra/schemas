@@ -38,7 +38,6 @@ import qualified Data.List.NonEmpty       as NE
 import           Data.Maybe
 import           Data.Scientific
 import           Data.Text                (Text, pack, unpack)
-import qualified Data.Text                as T
 import           Data.Tuple
 import           Data.Vector              (Vector)
 import qualified Data.Vector              as V
@@ -52,15 +51,13 @@ import           Prelude                  hiding (lookup)
 
 data Schema
   = Empty
-  | Bool
-  | Number
-  | String
   | Array Schema
   | StringMap Schema
   | Enum   (NonEmpty Text)
   | Record (HashMap Text Field)
   | Union  (HashMap Text Schema)
   | Or Schema Schema
+  | Prim
   deriving (Eq, Generic, Show)
 
 instance Monoid Schema where mempty = Empty
@@ -85,14 +82,12 @@ isRequiredField _                          = True
 -- | TypedSchema is designed to be used with higher-kinded types, Barbie style
 --   Its main addition over 'Schema' is converting from a JSON 'Value'
 data TypedSchemaFlex from a where
-  TBool :: (Bool -> a) -> (from -> Bool) -> TypedSchemaFlex from a
-  TNumber :: (Scientific -> a) -> (from -> Scientific) -> TypedSchemaFlex from a
-  TString :: (Text -> a) ->  (from -> Text) -> TypedSchemaFlex from a
   TEnum   :: (NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlex from a
   TArray :: TypedSchema b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
   TMap   :: TypedSchema b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
   TOr    :: TypedSchemaFlex from a -> TypedSchemaFlex from a -> TypedSchemaFlex from a
   TEmpty :: a -> TypedSchemaFlex from a
+  TPrim  :: (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
   RecordSchema :: Alt (RecordField from) a -> TypedSchemaFlex from a
   UnionSchema :: (NonEmpty (Text, TypedSchemaFlex from a)) -> (from -> Text) -> TypedSchemaFlex from a
 
@@ -108,18 +103,19 @@ stringMap sc = TMap sc id id
 list :: TypedSchema a -> TypedSchema [a]
 list schema = TArray schema V.toList V.fromList
 
+prim :: (A.FromJSON a, A.ToJSON a) => TypedSchema a
+prim = TPrim A.fromJSON A.toJSON
+
 instance Functor (TypedSchemaFlex from) where
   fmap = rmap
 
 instance Profunctor TypedSchemaFlex where
     dimap _ f (TEmpty a                ) = TEmpty (f a)
     dimap g f (TOr       a    b        ) = TOr (dimap g f a) (dimap g f b)
-    dimap g f (TBool     tof  fromf    ) = TBool (f . tof) (fromf . g)
-    dimap g f (TNumber   tof  fromf    ) = TNumber (f . tof) (fromf . g)
-    dimap g f (TString   tof  fromf    ) = TString (f . tof) (fromf . g)
     dimap g f (TEnum     opts fromf    ) = TEnum (second f <$> opts) (fromf . g)
     dimap g f (TArray      sc tof fromf) = TArray sc (f . tof) (fromf . g)
     dimap g f (TMap        sc tof fromf) = TMap sc (f . tof) (fromf . g)
+    dimap g f (TPrim          tof fromf) = TPrim (fmap f . tof) (fromf . g)
     dimap g f (RecordSchema sc) = RecordSchema (f <$> hoistAlt (dimap g id) sc)
     dimap g f (UnionSchema tags getTag ) = UnionSchema (second (dimap g f) <$> tags) (getTag . g)
 
@@ -196,28 +192,28 @@ instance HasSchema () where
   schema = mempty
 
 instance HasSchema Bool where
-  schema = TBool id id
+  schema = prim
 
 instance HasSchema Double where
-  schema = TNumber toRealFloat fromFloatDigits
+  schema = prim
 
 instance HasSchema Scientific where
-  schema = TNumber id id
+  schema = prim
 
 instance HasSchema Int where
-  schema = TNumber floor fromIntegral
+  schema = prim
 
 instance HasSchema Integer where
-  schema = TNumber floor fromIntegral
+  schema = prim
 
 instance HasSchema Natural where
-  schema = TNumber floor fromIntegral
+  schema = prim
 
 instance {-# OVERLAPPING #-} HasSchema String where
-  schema = TString T.unpack T.pack
+  schema = prim
 
 instance HasSchema Text where
-  schema = TString id id
+  schema = prim
 
 instance {-# OVERLAPPABLE #-} HasSchema a => HasSchema [a] where
   schema = TArray schema V.toList V.fromList
@@ -236,17 +232,18 @@ instance HasSchema a => HasSchema (Identity a) where
 
 instance HasSchema Schema where
   schema = union'
-    [ alt "Bool" #_Bool
-    , alt "Number" #_Number
-    , alt "String" #_String
-    , alt "StringMap" #_StringMap
+    [ alt "StringMap" #_StringMap
     , alt "Array" #_Array
     , alt "Enum" #_Enum
     , alt "Record" #_Record
     , alt "Union" #_Union
     , alt "Empty" #_Empty
     , alt "Or" #_Or
+    , alt "Prim" #_Prim
     ]
+
+instance HasSchema Value where
+  schema = prim
 
 instance (HasSchema a, HasSchema b) => HasSchema (a,b) where
   schema = record $ (,) <$> field "$1" fst <*> field "$2" snd
@@ -303,11 +300,9 @@ finiteValue d sc
 
 -- | Extract an untyped schema that can be serialized
 extractSchema :: TypedSchemaFlex from a -> Schema
-extractSchema TBool{}          = Bool
+extractSchema TPrim{}          = Prim
 extractSchema (TOr a b)        = Or (extractSchema a) (extractSchema b)
 extractSchema TEmpty{}         = Empty
-extractSchema TNumber{}        = Number
-extractSchema TString{}        = String
 extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array $ extractSchema sc
 extractSchema (TMap sc _ _)    = StringMap $ extractSchema sc
@@ -327,11 +322,9 @@ theSchema = extractSchema (schema @a)
 
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
-encodeWith (TBool   _ fromf        ) b = A.Bool (fromf b)
 encodeWith (TOr a b) x = encodeAlternatives [encodeWith a x, encodeWith b x]
-encodeWith (TNumber _ fromf        ) b = A.Number (fromf b)
-encodeWith (TString _ fromf        ) b = A.String (fromf b)
 encodeWith (TEnum   _ fromf        ) b = A.String (fromf b)
+encodeWith (TPrim   _ fromf        ) b = fromf b
 encodeWith (TEmpty _               ) _ = A.object []
 encodeWith (TArray      sc  _ fromf) b = A.Array (encodeWith sc <$> fromf b)
 encodeWith (TMap        sc  _ fromf) b = A.Object (encodeWith sc <$> fromf b)
@@ -373,6 +366,7 @@ finiteEncode d = finiteValue d (theSchema @a) . encode
 -- --------------------------------------------------------------------------
 -- Decoding
 
+-- TODO extract context out of DecodeError
 data DecodeError
   = InvalidRecordField { name :: Text, context :: [Text]}
   | MissingRecordField { name :: Text, context :: [Text]}
@@ -381,6 +375,7 @@ data DecodeError
   | InvalidUnionType { contents :: Value, context :: [Text]}
   | SchemaMismatch {context :: [Text]}
   | InvalidAlt {context :: [Text], path :: Path}
+  | PrimError {context :: [Text], primError :: String}
   deriving (Eq, Show)
 
 -- | Given a JSON 'Value' and a typed schema, extract a Haskell value
@@ -388,9 +383,6 @@ decodeWith :: TypedSchemaFlex from a -> Value -> Either DecodeError a
 decodeWith = go []
  where
   go :: [Text] -> TypedSchemaFlex from a -> Value -> Either DecodeError a
-  go _tx (TBool   tof _) (A.Bool   x) = pure $ tof x
-  go _tx (TNumber tof _) (A.Number x) = pure $ tof x
-  go _tx (TString tof _) (A.String x) = pure $ tof x
   go ctx (TEnum opts _) (A.String x) =
     maybe (Left $ InvalidEnumValue x (fst <$> opts) ctx) pure $ lookup x opts
   go ctx (TArray sc tof _) (A.Array x) =
@@ -419,6 +411,9 @@ decodeWith = go []
     let l = Map.lookup "L" x <&> go ("L":ctx) a
     let r = Map.lookup "R" x <&> go ("R":ctx) b
     fromMaybe (Left $ SchemaMismatch ctx) $ l <|> r
+  go ctx (TPrim tof _) x = case tof x of
+    A.Error e   -> Left (PrimError ctx e)
+    A.Success a -> pure a
   go ctx _ _ = Left $ SchemaMismatch ctx
 
   doRequiredField

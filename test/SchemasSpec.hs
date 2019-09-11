@@ -27,39 +27,39 @@ spec = do
       sc `isSubtypeOf` finite size sc `shouldSatisfy` isJust
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
-      Record [makeField "a" Number Nothing, makeField "def" Number Nothing]
-        `shouldBeSubtypeOf` Record [makeField "def" Number Nothing]
-      Record [makeField "a" Number (Just False), makeField "def" Number Nothing]
-        `shouldBeSubtypeOf` Record [makeField "def" Number Nothing]
+      Record [makeField "a" Prim Nothing, makeField "def" Prim Nothing]
+        `shouldBeSubtypeOf` Record [makeField "def" Prim Nothing]
+      Record [makeField "a" Prim (Just False), makeField "def" Prim Nothing]
+        `shouldBeSubtypeOf` Record [makeField "def" Prim Nothing]
     it "subtypes cannot turn a Required makeField into Optional" $ do
-      Record [makeField "a" Number (Just False)]
-        `shouldNotBeSubtypeOf` Record [makeField "a" Number Nothing]
+      Record [makeField "a" Prim (Just False)]
+        `shouldNotBeSubtypeOf` Record [makeField "a" Prim Nothing]
     it "subtypes can turn an Optional makeField into Required" $ do
-      Record [makeField "a" Number Nothing]
-        `shouldBeSubtypeOf` Record [makeField "a" Number (Just False)]
+      Record [makeField "a" Prim Nothing]
+        `shouldBeSubtypeOf` Record [makeField "a" Prim (Just False)]
     it "subtypes can relax the type of a field" $ do
-      Record [makeField "a" (Array Number) Nothing]
-        `shouldBeSubtypeOf` Record [makeField "a" Number Nothing]
+      Record [makeField "a" (Array Prim) Nothing]
+        `shouldBeSubtypeOf` Record [makeField "a" Prim Nothing]
     it "subtypes cannot remove Required fields" $ do
-      Record [makeField "def" Number Nothing] `shouldNotBeSubtypeOf` Record
-        [makeField "def" Number Nothing, makeField "a" Number Nothing]
+      Record [makeField "def" Prim Nothing] `shouldNotBeSubtypeOf` Record
+        [makeField "def" Prim Nothing, makeField "a" Prim Nothing]
     it "subtypes can remove Optional fields" $ do
-      Record [makeField "def" Number Nothing] `shouldBeSubtypeOf` Record
-        [makeField "def" Number Nothing, makeField "a" Number (Just False)]
+      Record [makeField "def" Prim Nothing] `shouldBeSubtypeOf` Record
+        [makeField "def" Prim Nothing, makeField "a" Prim (Just False)]
     it "subtypes can add enum choices" $ do
       Enum ["A", "def"] `shouldBeSubtypeOf` Enum ["def"]
     it "subtypes cannot remove enum choices" $ do
       Enum ["def"] `shouldNotBeSubtypeOf` Enum ["A"]
     it "subtypes can add constructors" $ do
-      Union [constructor' "A" String, constructor' "def" Empty]
+      Union [constructor' "A" Prim, constructor' "def" Empty]
         `shouldBeSubtypeOf` Union [constructor' "def" Empty]
     it "subtypes cannot remove constructors" $ do
       Union [constructor' "def" Empty]
-        `shouldNotBeSubtypeOf` Union [constructor' "A" (String)]
+        `shouldNotBeSubtypeOf` Union [constructor' "A" (Prim)]
     it "subtypes can expand an array" $ do
-      Array String `shouldBeSubtypeOf` String
+      Array Prim `shouldBeSubtypeOf` Prim
     it "subtypes cannot drop an array" $ do
-      String `shouldNotBeSubtypeOf` Array String
+      Prim `shouldNotBeSubtypeOf` Array Prim
   describe "examples" $ do
     describe "Schemas" $ do
       prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->

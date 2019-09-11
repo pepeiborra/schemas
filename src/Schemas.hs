@@ -14,6 +14,7 @@ module Schemas
   , theSchema
   , extractSchema
   -- ** Construction
+  , prim
   , enum
   , list
   , stringMap
