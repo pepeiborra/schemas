@@ -105,8 +105,8 @@ enum showF opts = TEnum alts (fromMaybe (error "invalid alt") . flip lookup altM
 stringMap :: TypedSchema a -> TypedSchema (HashMap Text a)
 stringMap sc = TMap sc id id
 
-tempty :: TypedSchema ()
-tempty = TEmpty ()
+list :: TypedSchema a -> TypedSchema [a]
+list schema = TArray schema V.toList V.fromList
 
 instance Functor (TypedSchemaFlex from) where
   fmap = rmap
@@ -154,10 +154,16 @@ record :: Alt (RecordField a) a -> TypedSchema a
 record = RecordSchema
 
 field :: HasSchema a => Text -> (from -> a) -> Alt (RecordField from) a
-field n get = liftAlt (RequiredAp n (dimap get id schema))
+field = fieldWith schema
+
+fieldWith :: TypedSchema a -> Text -> (from -> a) -> Alt (RecordField from) a
+fieldWith schema n get = liftAlt (RequiredAp n (dimap get id schema))
 
 optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> Alt (RecordField from) (Maybe a)
-optField n get = liftAlt (OptionalAp n schema get id)
+optField = optFieldWith schema
+
+optFieldWith :: forall a from. TypedSchema a -> Text -> (from -> Maybe a) -> Alt (RecordField from) (Maybe a)
+optFieldWith schema n get = liftAlt (OptionalAp n schema get id)
 
 -- --------------------------------------------------------------------------------
 -- Typed Unions
@@ -187,7 +193,7 @@ class HasSchema a where
   schema :: TypedSchema a
 
 instance HasSchema () where
-  schema = tempty
+  schema = mempty
 
 instance HasSchema Bool where
   schema = TBool id id
@@ -199,6 +205,9 @@ instance HasSchema Scientific where
   schema = TNumber id id
 
 instance HasSchema Int where
+  schema = TNumber floor fromIntegral
+
+instance HasSchema Integer where
   schema = TNumber floor fromIntegral
 
 instance HasSchema Natural where
@@ -295,8 +304,8 @@ finiteValue d sc
 -- | Extract an untyped schema that can be serialized
 extractSchema :: TypedSchemaFlex from a -> Schema
 extractSchema TBool{}          = Bool
-extractSchema (TOr a b) = Or (extractSchema a) (extractSchema b)
-extractSchema TEmpty{}     = Empty
+extractSchema (TOr a b)        = Or (extractSchema a) (extractSchema b)
+extractSchema TEmpty{}         = Empty
 extractSchema TNumber{}        = Number
 extractSchema TString{}        = String
 extractSchema (TEnum opts  _)  = Enum (fst <$> opts)

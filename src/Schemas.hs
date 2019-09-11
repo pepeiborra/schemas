@@ -14,14 +14,17 @@ module Schemas
   , theSchema
   , extractSchema
   -- ** Construction
-  , tempty
   , enum
+  , list
   , stringMap
   , Key(..)
   -- *** Applicative record definition
   , record
+  , RecordField
   , field
+  , fieldWith
   , optField
+  , optFieldWith
   , fieldName
   -- *** Unions
   , union
