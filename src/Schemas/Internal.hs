@@ -89,7 +89,7 @@ data TypedSchemaFlex from a where
   TOr    :: TypedSchemaFlex from a -> TypedSchemaFlex from a -> TypedSchemaFlex from a
   TEmpty :: a -> TypedSchemaFlex from a
   TPrim  :: (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
-  RecordSchema :: Alt (RecordField from) a -> TypedSchemaFlex from a
+  RecordSchema :: RecordFields from a -> TypedSchemaFlex from a
   UnionSchema :: (NonEmpty (Text, TypedSchemaFlex from a)) -> (from -> Text) -> TypedSchemaFlex from a
 
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
@@ -138,6 +138,8 @@ data RecordField from a where
   RequiredAp :: Text -> TypedSchemaFlex from a -> RecordField from a
   OptionalAp :: Text -> TypedSchemaFlex from (Maybe r) -> (Maybe r -> a) -> RecordField from a
 
+type RecordFields from a = Alt (RecordField from) a
+
 instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
   dimap f g (OptionalAp name sc to) = OptionalAp name (lmap f sc) (g . to)
@@ -147,17 +149,16 @@ fieldName (RequiredAp x _) = x
 fieldName (OptionalAp x _ _) = x
 
 -- | Define a record schema using applicative syntax
-record :: Alt (RecordField from) a -> TypedSchemaFlex from a
+record :: RecordFields from a -> TypedSchemaFlex from a
 record = RecordSchema
 
-field :: HasSchema a => Text -> (from -> a) -> Alt (RecordField from) a
+field :: HasSchema a => Text -> (from -> a) -> RecordFields from a
 field = fieldWith schema
 
-fieldWith :: TypedSchema a -> Text -> (from -> a) -> Alt (RecordField from) a
+fieldWith :: TypedSchema a -> Text -> (from -> a) -> RecordFields from a
 fieldWith schema n get = liftAlt (RequiredAp n (lmap get schema))
 
-optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> Alt (RecordField from) (Maybe a)
--- TODO avoid duplicate call to get
+optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
 optField n get = optFieldWith (dimap (fromJust . get) Just (schema @a)) n
 
 optFieldWith
@@ -166,6 +167,14 @@ optFieldWith
     -> Text
     -> Alt (RecordField from) (Maybe a)
 optFieldWith schema n = liftAlt (OptionalAp n schema id)
+
+-- | Extract all the field groups (from alternatives) in the record
+extractFields :: RecordFields from a -> [[(Text, Field)]]
+extractFields = runAlt_ ((:[]) . (:[]) . extractField)
+  where
+    extractField :: RecordField from a -> (Text, Field)
+    extractField (RequiredAp n sc) = (n,) . (`Field` Nothing) $ extractSchema sc
+    extractField (OptionalAp n sc _) = (n,) . (`Field` Just False) $ extractSchema sc
 
 -- --------------------------------------------------------------------------------
 -- Typed Unions
@@ -315,11 +324,7 @@ extractSchema TEmpty{}         = Empty
 extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array $ extractSchema sc
 extractSchema (TMap sc _ _)    = StringMap $ extractSchema sc
-extractSchema (RecordSchema rs) = foldMap (Record . fromList) $ runAlt_ ((:[]) . (:[]) . extractField) rs
-  where
-    extractField :: RecordField from a -> (Text, Field)
-    extractField (RequiredAp n sc) = (n,) . (`Field` Nothing) $ extractSchema sc
-    extractField (OptionalAp n sc _) = (n,) . (`Field` Just False) $ extractSchema sc
+extractSchema (RecordSchema rs) = foldMap (Record . fromList) $ extractFields rs
 extractSchema (UnionSchema scs _getTag) =
   Union . Map.fromList . NE.toList $ fmap (\(n, sc) -> (n, extractSchema sc)) scs
 

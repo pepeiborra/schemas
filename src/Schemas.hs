@@ -21,12 +21,14 @@ module Schemas
   , Key(..)
   -- *** Applicative record definition
   , record
+  , Alt
   , RecordField
   , field
   , fieldWith
   , optField
   , optFieldWith
   , fieldName
+  , extractFields
   -- *** Unions
   , union
   , union'
@@ -48,4 +50,5 @@ module Schemas
   )
   where
 
+import Control.Alternative.Free
 import Schemas.Internal
