@@ -257,6 +257,9 @@ instance (HasSchema a, HasSchema b) => HasSchema (a,b) where
 instance (HasSchema a, HasSchema b, HasSchema c) => HasSchema (a,b,c) where
   schema = record $ (,,) <$> field "$1" (view _1) <*> field "$2" (view _2) <*> field "$3" (view _3)
 
+instance (HasSchema a, HasSchema b) => HasSchema (Either a b) where
+  schema = union' [alt "Left" #_Left, alt "Right" #_Right]
+
 instance (Eq key, Hashable key, HasSchema a, Key key) => HasSchema (HashMap key a) where
   schema = dimap toKeyed fromKeyed $ stringMap schema
     where
