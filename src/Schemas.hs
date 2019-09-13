@@ -29,6 +29,7 @@ module Schemas
   , fieldWith
   , optField
   , optFieldWith
+  , optFieldGeneral
   , fieldName
   , extractFields
   -- *** Unions

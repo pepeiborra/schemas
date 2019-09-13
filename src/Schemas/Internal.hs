@@ -141,17 +141,17 @@ type TypedSchema a = TypedSchemaFlex a a
 
 data RecordField from a where
   RequiredAp :: Text -> TypedSchemaFlex from a -> RecordField from a
-  OptionalAp :: Text -> TypedSchemaFlex from (Maybe r) -> (Maybe r -> a) -> RecordField from a
+  OptionalAp :: Text -> TypedSchemaFlex from a -> a -> (from -> Bool) -> RecordField from a
 
 type RecordFields from a = Alt (RecordField from) a
 
 instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
-  dimap f g (OptionalAp name sc to) = OptionalAp name (lmap f sc) (g . to)
+  dimap f g (OptionalAp name sc def to) = OptionalAp name (dimap f g sc) (g def) (to . f)
 
 fieldName :: RecordField from a -> Text
 fieldName (RequiredAp x _) = x
-fieldName (OptionalAp x _ _) = x
+fieldName (OptionalAp x _ _ _) = x
 
 -- | Define a record schema using applicative syntax
 record :: RecordFields from a -> TypedSchemaFlex from a
@@ -171,7 +171,11 @@ optFieldWith
      . TypedSchemaFlex from (Maybe a)
     -> Text
     -> Alt (RecordField from) (Maybe a)
-optFieldWith schema n = liftAlt (OptionalAp n schema id)
+optFieldWith schema n =
+    liftAlt (OptionalAp n schema Nothing (isJust . either (const Nothing) id . runSchema schema))
+
+optFieldGeneral :: TypedSchemaFlex from a -> Text -> (from -> Bool) -> a -> Alt (RecordField from) a
+optFieldGeneral schema n pred def = liftAlt (OptionalAp n schema def pred)
 
 -- | Extract all the field groups (from alternatives) in the record
 extractFields :: RecordFields from a -> [[(Text, Field)]]
@@ -179,7 +183,7 @@ extractFields = runAlt_ ((:[]) . (:[]) . extractField)
   where
     extractField :: RecordField from a -> (Text, Field)
     extractField (RequiredAp n sc) = (n,) . (`Field` Nothing) $ extractSchema sc
-    extractField (OptionalAp n sc _) = (n,) . (`Field` Just False) $ extractSchema sc
+    extractField (OptionalAp n sc _ _) = (n,) . (`Field` Just False) $ extractSchema sc
 
 -- --------------------------------------------------------------------------------
 -- Typed Unions
@@ -355,10 +359,9 @@ encodeWith (RecordSchema rec) x = encodeAlternatives $ fmap (A.Object . fromList
                 fields = runAlt_ (maybe [[]] ((: []) . (: [])) . extractFieldAp x) rec
 
                 extractFieldAp b (RequiredAp n sc  ) = Just (n, encodeWith sc b)
-                -- TODO avoid duplicated work in runSchema and encodeWith calls below
-                extractFieldAp b (OptionalAp n sc _) = case runSchema sc b of
-                  Right{} -> Just (n, encodeWith sc b)
-                  _       -> Nothing
+                extractFieldAp b (OptionalAp n sc _ pred) = if pred b
+                  then Just (n, encodeWith sc b)
+                  else Nothing
 
 encodeWith (UnionSchema [(_, sc)] _    ) x = encodeWith sc x
 encodeWith (UnionSchema opts      fromF) x = case lookup tag opts of
@@ -422,8 +425,8 @@ runSchema sc = runExcept . go sc
         go (RecordSchema fields ) from = runAlt f fields
             where
                 f :: RecordField from b -> Except [DecodeError] b
-                f (RequiredAp _ sc    ) = go sc from
-                f (OptionalAp _ sc toF) = (toF <$> go sc from) <|> pure (toF Nothing)
+                f (RequiredAp _ sc      ) = go sc from
+                f (OptionalAp _ sc def _) = go sc from <|> pure def
         go (UnionSchema opts tag) from = case lookup theTag opts of
             Just sc -> go sc from
             Nothing -> failWith (InvalidConstructor theTag)
@@ -453,9 +456,9 @@ decodeWith = go []
                     Nothing -> case sc of
                         TArray _ tof' _ -> pure $ tof' []
                         _               -> Left (ctx, MissingRecordField n)
-                f fields (OptionalAp n sc to) = case Map.lookup n fields of
-                    Just v  -> to <$> go (n : ctx) sc v
-                    Nothing -> pure $ to Nothing
+                f fields (OptionalAp n sc def _) = case Map.lookup n fields of
+                    Just v  -> go (n : ctx) sc v
+                    Nothing -> pure def
 
         go _tx (UnionSchema opts _) (A.String n) | Just (TEmpty a) <- lookup n opts = pure a
         go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
