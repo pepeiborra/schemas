@@ -33,6 +33,8 @@ import           Data.Generics.Labels     ()
 import           Data.Hashable
 import           Data.HashMap.Strict      (HashMap)
 import qualified Data.HashMap.Strict      as Map
+import           Data.HashSet             (HashSet)
+import qualified Data.HashSet             as Set
 import           Data.List                (find)
 import           Data.List.NonEmpty       (NonEmpty (..))
 import qualified Data.List.NonEmpty       as NE
@@ -106,6 +108,9 @@ list schema = TArray schema V.toList V.fromList
 
 prim :: (A.FromJSON a, A.ToJSON a) => TypedSchema a
 prim = TPrim A.fromJSON A.toJSON
+
+readShow :: (Read a, Show a) => TypedSchema a
+readShow = dimap show read schema
 
 instance Functor (TypedSchemaFlex from) where
   fmap = rmap
@@ -235,6 +240,9 @@ instance {-# OVERLAPPABLE #-} HasSchema a => HasSchema [a] where
 
 instance HasSchema a => HasSchema (Vector a) where
   schema = TArray schema id id
+
+instance (Eq a, Hashable a, HasSchema a) => HasSchema (HashSet a) where
+  schema = dimap Set.toList Set.fromList schema
 
 instance  HasSchema a => HasSchema (NonEmpty a) where
   schema = TArray schema (NE.fromList . V.toList) (V.fromList . NE.toList)

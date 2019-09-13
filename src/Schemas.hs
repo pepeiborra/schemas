@@ -16,6 +16,7 @@ module Schemas
   -- ** Construction
   , prim
   , enum
+  , readShow
   , list
   , stringMap
   , Key(..)
@@ -23,6 +24,7 @@ module Schemas
   , record
   , Alt
   , RecordField
+  , RecordFields
   , field
   , fieldWith
   , optField
@@ -47,8 +49,11 @@ module Schemas
   -- * working with recursive schemas
   , finiteValue
   , finiteEncode
+  -- * Reexports
+  , Profunctor(..)
   )
   where
 
 import Control.Alternative.Free
+import Data.Profunctor
 import Schemas.Internal
