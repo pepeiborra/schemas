@@ -25,27 +25,25 @@ data Options = Options
 defOptions :: Options
 defOptions = Options id id
 
-type FieldSchema = FieldEncode `And` HasSchema
-
-fieldSchemaC :: Proxy FieldSchema
+fieldSchemaC :: Proxy FieldEncode
 fieldSchemaC = Proxy
 
-gSchema :: forall a. (HasDatatypeInfo a, All2 FieldSchema (Code a)) => Options -> TypedSchema a
+gSchema :: forall a. (HasDatatypeInfo a, All2 FieldEncode (Code a)) => Options -> TypedSchema a
 gSchema opts = case datatypeInfo (Proxy @a) of
     (Newtype _ _ ci       ) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
     (ADT _ _ (ci :* Nil) _) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
     (ADT _ _ cis         _) -> dimap (unSOP . from) (to . SOP) $ gSchemaNS opts cis
 
-gSchemaNS :: forall xss . All2 FieldSchema xss => Options -> NP ConstructorInfo xss -> TypedSchema (NS (NP I) xss)
+gSchemaNS :: forall xss . All2 FieldEncode xss => Options -> NP ConstructorInfo xss -> TypedSchema (NS (NP I) xss)
 gSchemaNS opts =
     union
         . NE.fromList
         . hcollapse
-        . hczipWith3 (Proxy :: Proxy (All FieldSchema)) mk (injections @_ @(NP I)) (ejections  @_ @(NP I))
+        . hczipWith3 (Proxy :: Proxy (All FieldEncode)) mk (injections @_ @(NP I)) (ejections  @_ @(NP I))
     where
         mk
             :: forall (xs :: [*])
-             . All FieldSchema xs
+             . All FieldEncode xs
             => Injection (NP I) xss xs
             -> Ejection (NP I) xss xs
             -> ConstructorInfo xs
@@ -59,7 +57,7 @@ gSchemaNS opts =
 
 gSchemaNP
     :: forall (xs :: [*])
-     . (All FieldSchema xs)
+     . (All FieldEncode xs)
     => Options
     -> ConstructorInfo xs
     -> TypedSchema (NP I xs)
@@ -68,7 +66,7 @@ gSchemaNP opts ci =
   hsequence $
   hczipWith fieldSchemaC mk fieldNames projections
   where
-    mk :: (HasSchema x, FieldEncode x) => K String x -> Projection I xs x -> Alt (RecordField (NP I xs)) x
+    mk :: (FieldEncode x) => K String x -> Projection I xs x -> Alt (RecordField (NP I xs)) x
     mk (K theFieldName) (Fn proj) =
       fieldEncoder (pack $ fieldLabelModifier opts theFieldName) (dimap K unI proj)
 
