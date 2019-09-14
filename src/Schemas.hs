@@ -34,6 +34,8 @@ module Schemas
   , optFieldGeneral
   , fieldName
   , extractFields
+  , liftMaybe
+  , liftEither
   -- *** Unions
   , union
   , union'

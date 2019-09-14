@@ -21,6 +21,7 @@ module Schemas.Internal where
 
 import           Control.Alternative.Free
 import           Control.Applicative      (Alternative (..))
+import           Control.Exception
 import           Control.Lens             hiding (Empty, enum)
 import           Control.Monad
 import           Control.Monad.Trans.Except
@@ -43,6 +44,7 @@ import           Data.Maybe
 import           Data.Scientific
 import           Data.Text                (Text, pack, unpack)
 import           Data.Tuple
+import           Data.Typeable            (Typeable)
 import           Data.Vector              (Vector)
 import qualified Data.Vector              as V
 import           GHC.Exts                 (fromList)
@@ -92,6 +94,9 @@ data TypedSchemaFlex from a where
   TOr    :: TypedSchemaFlex from a -> TypedSchemaFlex from a -> TypedSchemaFlex from a
   TEmpty :: a -> TypedSchemaFlex from a
   TPrim  :: (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
+  -- TTry is used to implement 'optField' on top of 'optFieldWith'
+  -- it could be exposed to provide some form of error handling, but currently is not
+  TTry   :: TypedSchemaFlex a b -> (a' -> Either SomeException a) -> TypedSchemaFlex a' b
   RecordSchema :: RecordFields from a -> TypedSchemaFlex from a
   UnionSchema :: (NonEmpty (Text, TypedSchemaFlex from a)) -> (from -> Text) -> TypedSchemaFlex from a
 
@@ -118,6 +123,7 @@ instance Functor (TypedSchemaFlex from) where
 
 instance Profunctor TypedSchemaFlex where
     dimap _ f (TEmpty a                ) = TEmpty (f a)
+    dimap g f (TTry sc try) = TTry (rmap f sc) (try . g)
     dimap g f (TOr       a    b        ) = TOr (dimap g f a) (dimap g f b)
     dimap g f (TEnum     opts fromf    ) = TEnum (second f <$> opts) (fromf . g)
     dimap g f (TArray      sc tof fromf) = TArray sc (f . tof) (fromf . g)
@@ -145,16 +151,16 @@ data RecordField from a where
                 , fieldTypedSchema :: TypedSchemaFlex from a
                 } -> RecordField from a
   OptionalAp :: { fieldName :: Text
-                , fieldTypedSchemaOpt :: TypedSchemaFlex a a
-                , fieldExtract :: from -> Maybe a
-                , fieldResult :: Maybe a -> r
-                } -> RecordField from r
+                , fieldTypedSchema :: TypedSchemaFlex from a
+                , fieldOpt :: from -> Bool
+                , fieldDefValue :: a
+                } -> RecordField from a
 
 type RecordFields from a = Alt (RecordField from) a
 
 instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
-  dimap f g (OptionalAp name sc from to) = OptionalAp name sc (from . f) (g . to)
+  dimap f g (OptionalAp name sc opt def) = OptionalAp name (dimap f g sc) (opt . f) (g def)
 
 -- | Define a record schema using applicative syntax
 record :: RecordFields from a -> TypedSchemaFlex from a
@@ -166,19 +172,28 @@ field = fieldWith schema
 fieldWith :: TypedSchema a -> Text -> (from -> a) -> RecordFields from a
 fieldWith schema n get = liftAlt (RequiredAp n (lmap get schema))
 
+data OptFieldE = OptFieldE
+ deriving (Exception, Show, Typeable)
+
 optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
-optField = optFieldWith schema
+optField n get = optFieldWith (lmap get $ liftMaybe (schema @a)) n
+
+-- | Use this to build schemas for 'optFieldWith'. The resulting schema fails cleanly for the Nothing case
+liftMaybe :: TypedSchema a -> TypedSchema (Maybe a)
+liftMaybe = liftMaybe' OptFieldE
+
+liftMaybe' :: Exception e => e -> TypedSchema a -> TypedSchema (Maybe a)
+liftMaybe' e schema = rmap Just (TTry schema (maybe (Left $ toException e) Right))
 
 optFieldWith
     :: forall a from
-     . TypedSchema a
+     . TypedSchemaFlex from (Maybe a)
     -> Text
-    -> (from -> Maybe a)
     -> Alt (RecordField from) (Maybe a)
-optFieldWith schema n get = optFieldGeneral schema n get id
+optFieldWith schema n = optFieldGeneral schema n (isJust . either (const Nothing) id . runSchema schema) Nothing
 
-optFieldGeneral :: TypedSchema r -> Text -> (from -> Maybe r) -> (Maybe r -> a) -> RecordFields from a
-optFieldGeneral schema n from to = liftAlt (OptionalAp n schema from to)
+optFieldGeneral :: TypedSchemaFlex from a -> Text -> (from -> Bool) -> a -> Alt (RecordField from) a
+optFieldGeneral schema n opt def = liftAlt (OptionalAp n schema opt def)
 
 optFieldEither
     :: forall a from e
@@ -187,11 +202,18 @@ optFieldEither
     -> (from -> Either e a)
     -> e
     -> RecordFields from (Either e a)
-optFieldEither = optFieldEitherWith schema
+optFieldEither n from = optFieldEitherWith (lmap from $ liftEither schema) n
 
-optFieldEitherWith :: TypedSchema a -> Text -> (from -> Either e a) -> e -> RecordFields from (Either e a)
-optFieldEitherWith schema n from e =
-  optFieldGeneral schema n (either (const Nothing) Just . from) (maybe (Left e) Right)
+-- | Use this to build schemas for 'optFieldEitherWith'. The resulting schema fails cleanly for the Left case
+liftEither :: TypedSchema a -> TypedSchema (Either b a)
+liftEither = liftEither' OptFieldE
+
+liftEither' :: Exception e => e -> TypedSchema a -> TypedSchema (Either b a)
+liftEither' e schema = rmap Right (TTry schema (either (const $ Left $ toException e) Right))
+
+optFieldEitherWith
+    :: TypedSchemaFlex from (Either e a) -> Text -> e -> RecordFields from (Either e a)
+optFieldEitherWith schema n e = optFieldGeneral schema n (either (const False) isRight . runSchema schema) (Left e)
 
 -- | Extract all the field groups (from alternatives) in the record
 extractFields :: RecordFields from a -> [[(Text, Field)]]
@@ -347,6 +369,7 @@ finiteValue d sc
 -- | Extract an untyped schema that can be serialized
 extractSchema :: TypedSchemaFlex from a -> Schema
 extractSchema TPrim{}          = Prim
+extractSchema (TTry sc _)      = extractSchema sc
 extractSchema (TOr a b)        = Or (extractSchema a) (extractSchema b)
 extractSchema TEmpty{}         = Empty
 extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
@@ -365,6 +388,8 @@ theSchema = extractSchema (schema @a)
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
 encodeWith (TOr a b) x = encodeAlternatives [encodeWith a x, encodeWith b x]
+ -- TODO change return type of encodeWith to reflect partiality in the presence of TTry
+encodeWith (TTry sc try) x = encodeWith sc (either throw id $ try x)
 encodeWith (TEnum   _ fromf        ) b = A.String (fromf b)
 encodeWith (TPrim   _ fromf        ) b = fromf b
 encodeWith (TEmpty _               ) _ = A.object []
@@ -375,9 +400,9 @@ encodeWith (RecordSchema rec) x = encodeAlternatives $ fmap (A.Object . fromList
                 fields = runAlt_ (maybe [[]] ((: []) . (: [])) . extractFieldAp x) rec
 
                 extractFieldAp b RequiredAp{..} = Just (fieldName, encodeWith fieldTypedSchema b)
-                extractFieldAp b OptionalAp{..} = case fieldExtract b of
-                  Just x  -> Just (fieldName, encodeWith fieldTypedSchemaOpt x)
-                  Nothing -> Nothing
+                extractFieldAp b OptionalAp{..} = if fieldOpt b
+                  then Just (fieldName, encodeWith fieldTypedSchema b)
+                  else Nothing
 
 encodeWith (UnionSchema [(_, sc)] _    ) x = encodeWith sc x
 encodeWith (UnionSchema opts      fromF) x = case lookup tag opts of
@@ -421,6 +446,7 @@ data DecodeError
   | SchemaMismatch
   | InvalidAlt {path :: Path}
   | PrimError {primError :: String}
+  | TriedAndFailed
   deriving (Eq, Show)
 
 runSchema :: TypedSchemaFlex from a -> from -> Either [DecodeError] a
@@ -428,6 +454,7 @@ runSchema sc = runExcept . go sc
     where
         go :: forall from a. TypedSchemaFlex from a -> from -> Except [DecodeError] a
         go (TEmpty a       ) _    = pure a
+        go (TTry sc try) from = go sc =<< either (const $ failWith TriedAndFailed) return (try from)
         go (TPrim toF fromF) from = case toF (fromF from) of
             A.Success a -> pure a
             A.Error   e -> failWith (PrimError e)
@@ -442,7 +469,7 @@ runSchema sc = runExcept . go sc
             where
                 f :: RecordField from b -> Except [DecodeError] b
                 f RequiredAp{..} = go fieldTypedSchema from
-                f OptionalAp{..} = fmap fieldResult $ sequenceA $ go fieldTypedSchemaOpt <$> fieldExtract from
+                f OptionalAp{..} = go fieldTypedSchema from <|> pure fieldDefValue
         go (UnionSchema opts tag) from = case lookup theTag opts of
             Just sc -> go sc from
             Nothing -> failWith (InvalidConstructor theTag)
@@ -473,8 +500,8 @@ decodeWith = go []
                         TArray _ tof' _ -> pure $ tof' []
                         _               -> Left (ctx, MissingRecordField n)
                 f fields OptionalAp{..} = case Map.lookup fieldName fields of
-                    Just v  -> fieldResult . Just <$> go (fieldName : ctx) fieldTypedSchemaOpt v
-                    Nothing -> pure $ fieldResult Nothing
+                    Just v  -> go (fieldName : ctx) fieldTypedSchema v
+                    Nothing -> pure fieldDefValue
 
         go _tx (UnionSchema opts _) (A.String n) | Just (TEmpty a) <- lookup n opts = pure a
         go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
@@ -489,7 +516,8 @@ decodeWith = go []
         go ctx (TPrim tof _) x = case tof x of
             A.Error   e -> Left (ctx, PrimError e)
             A.Success a -> pure a
-        go ctx _ _ = Left (ctx, SchemaMismatch)
+        go ctx (TTry sc _try) x = go ctx sc x
+        go ctx _ _ = Left (reverse ctx, SchemaMismatch)
 
 decode :: HasSchema a => Value -> Either (Trace, DecodeError) a
 decode = decodeWith schema
