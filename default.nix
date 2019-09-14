@@ -21,10 +21,14 @@ let
       else  packageSet
   );
     hsPkgs = haskellPackages.override {
-    all-cabal-hashes =
-      nixpkgs.fetchurl {
-        url = "https://github.com/commercialhaskell/all-cabal-hashes/archive/b134e7c22f70c7bfef92aaae5fa3bf8868ded6f8.tar.gz";
-        sha256 = "111lnz2p75gb7cni324h5cphvig1ian5hg6rxbf167sjnr2sbkjw";
+      all-cabal-hashes =
+        nixpkgs.fetchurl {
+          url = "https://github.com/commercialhaskell/all-cabal-hashes/archive/3064cb67fa50443118c22715e6d7a7191415073f.tar.gz";
+          sha256 = "0wh271vbay1sb319hzny827yjb87gb2s2pn5i561cbqvnkskg0z8";
+        };
+      overrides = new: old: {
+        sop-core      = new.callHackage "sop-core"     "0.5.0.0" {};
+        generics-sop  = new.callHackage "generics-sop" "0.5.0.0" {};
       };
      };
 
