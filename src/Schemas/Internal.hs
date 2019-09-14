@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE AllowAmbiguousTypes   #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveFunctor         #-}
@@ -140,18 +141,20 @@ type TypedSchema a = TypedSchemaFlex a a
 -- Applicative records
 
 data RecordField from a where
-  RequiredAp :: Text -> TypedSchemaFlex from a -> RecordField from a
-  OptionalAp :: Text -> TypedSchemaFlex from a -> a -> (from -> Bool) -> RecordField from a
+  RequiredAp :: { fieldName :: Text
+                , fieldTypedSchema :: TypedSchemaFlex from a
+                } -> RecordField from a
+  OptionalAp :: { fieldName :: Text
+                , fieldTypedSchemaOpt :: TypedSchemaFlex a a
+                , fieldExtract :: from -> Maybe a
+                , fieldResult :: Maybe a -> r
+                } -> RecordField from r
 
 type RecordFields from a = Alt (RecordField from) a
 
 instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
-  dimap f g (OptionalAp name sc def to) = OptionalAp name (dimap f g sc) (g def) (to . f)
-
-fieldName :: RecordField from a -> Text
-fieldName (RequiredAp x _) = x
-fieldName (OptionalAp x _ _ _) = x
+  dimap f g (OptionalAp name sc from to) = OptionalAp name sc (from . f) (g . to)
 
 -- | Define a record schema using applicative syntax
 record :: RecordFields from a -> TypedSchemaFlex from a
@@ -164,18 +167,31 @@ fieldWith :: TypedSchema a -> Text -> (from -> a) -> RecordFields from a
 fieldWith schema n get = liftAlt (RequiredAp n (lmap get schema))
 
 optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
-optField n get = optFieldWith (dimap (fromJust . get) Just (schema @a)) n
+optField = optFieldWith schema
 
 optFieldWith
     :: forall a from
-     . TypedSchemaFlex from (Maybe a)
+     . TypedSchema a
     -> Text
+    -> (from -> Maybe a)
     -> Alt (RecordField from) (Maybe a)
-optFieldWith schema n =
-    liftAlt (OptionalAp n schema Nothing (isJust . either (const Nothing) id . runSchema schema))
+optFieldWith schema n get = optFieldGeneral schema n get id
 
-optFieldGeneral :: TypedSchemaFlex from a -> Text -> (from -> Bool) -> a -> Alt (RecordField from) a
-optFieldGeneral schema n pred def = liftAlt (OptionalAp n schema def pred)
+optFieldGeneral :: TypedSchema r -> Text -> (from -> Maybe r) -> (Maybe r -> a) -> RecordFields from a
+optFieldGeneral schema n from to = liftAlt (OptionalAp n schema from to)
+
+optFieldEither
+    :: forall a from e
+     . HasSchema a
+    => Text
+    -> (from -> Either e a)
+    -> e
+    -> RecordFields from (Either e a)
+optFieldEither = optFieldEitherWith schema
+
+optFieldEitherWith :: TypedSchema a -> Text -> (from -> Either e a) -> e -> RecordFields from (Either e a)
+optFieldEitherWith schema n from e =
+  optFieldGeneral schema n (either (const Nothing) Just . from) (maybe (Left e) Right)
 
 -- | Extract all the field groups (from alternatives) in the record
 extractFields :: RecordFields from a -> [[(Text, Field)]]
@@ -358,10 +374,10 @@ encodeWith (RecordSchema rec) x = encodeAlternatives $ fmap (A.Object . fromList
             where
                 fields = runAlt_ (maybe [[]] ((: []) . (: [])) . extractFieldAp x) rec
 
-                extractFieldAp b (RequiredAp n sc  ) = Just (n, encodeWith sc b)
-                extractFieldAp b (OptionalAp n sc _ pred) = if pred b
-                  then Just (n, encodeWith sc b)
-                  else Nothing
+                extractFieldAp b RequiredAp{..} = Just (fieldName, encodeWith fieldTypedSchema b)
+                extractFieldAp b OptionalAp{..} = case fieldExtract b of
+                  Just x  -> Just (fieldName, encodeWith fieldTypedSchemaOpt x)
+                  Nothing -> Nothing
 
 encodeWith (UnionSchema [(_, sc)] _    ) x = encodeWith sc x
 encodeWith (UnionSchema opts      fromF) x = case lookup tag opts of
@@ -425,8 +441,8 @@ runSchema sc = runExcept . go sc
         go (RecordSchema fields ) from = runAlt f fields
             where
                 f :: RecordField from b -> Except [DecodeError] b
-                f (RequiredAp _ sc      ) = go sc from
-                f (OptionalAp _ sc def _) = go sc from <|> pure def
+                f RequiredAp{..} = go fieldTypedSchema from
+                f OptionalAp{..} = fmap fieldResult $ sequenceA $ go fieldTypedSchemaOpt <$> fieldExtract from
         go (UnionSchema opts tag) from = case lookup theTag opts of
             Just sc -> go sc from
             Nothing -> failWith (InvalidConstructor theTag)
@@ -456,9 +472,9 @@ decodeWith = go []
                     Nothing -> case sc of
                         TArray _ tof' _ -> pure $ tof' []
                         _               -> Left (ctx, MissingRecordField n)
-                f fields (OptionalAp n sc def _) = case Map.lookup n fields of
-                    Just v  -> go (n : ctx) sc v
-                    Nothing -> pure def
+                f fields OptionalAp{..} = case Map.lookup fieldName fields of
+                    Just v  -> fieldResult . Just <$> go (fieldName : ctx) fieldTypedSchemaOpt v
+                    Nothing -> pure $ fieldResult Nothing
 
         go _tx (UnionSchema opts _) (A.String n) | Just (TEmpty a) <- lookup n opts = pure a
         go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of

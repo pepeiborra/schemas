@@ -29,6 +29,8 @@ module Schemas
   , fieldWith
   , optField
   , optFieldWith
+  , optFieldEither
+  , optFieldEitherWith
   , optFieldGeneral
   , fieldName
   , extractFields
