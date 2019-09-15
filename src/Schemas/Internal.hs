@@ -85,8 +85,9 @@ isRequiredField _                          = True
 -- Typed schemas
 -- --------------------------------------------------------------------------------
 
--- | TypedSchema is designed to be used with higher-kinded types, Barbie style
---   Its main addition over 'Schema' is converting from a JSON 'Value'
+-- | @TypedSchemaFlex enc dec@ is a schema for encoding to @enc@ and decoding to @dec@.
+--   Usually we want @enc@ and @dec@ to be the same type but this flexibility comes in handy
+--   when composing typed schemas.
 data TypedSchemaFlex from a where
   TEnum   :: (NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlex from a
   TArray :: TypedSchema b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
