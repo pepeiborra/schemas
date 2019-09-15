@@ -28,6 +28,7 @@ module Schemas
   , RecordFields
   , field
   , fieldWith
+  , fieldWith'
   , optField
   , optFieldWith
   , optFieldEither

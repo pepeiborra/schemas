@@ -174,7 +174,10 @@ field :: HasSchema a => Text -> (from -> a) -> RecordFields from a
 field = fieldWith schema
 
 fieldWith :: TypedSchema a -> Text -> (from -> a) -> RecordFields from a
-fieldWith schema n get = liftAlt (RequiredAp n (lmap get schema))
+fieldWith schema n get = fieldWith' (lmap get schema) n
+
+fieldWith' :: TypedSchemaFlex from a -> Text -> RecordFields from a
+fieldWith' schema n = liftAlt (RequiredAp n schema)
 
 data OptFieldE = OptFieldE
  deriving (Exception, Show, Typeable)
