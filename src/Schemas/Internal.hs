@@ -366,77 +366,68 @@ finiteEncode d = finiteValue d (theSchema @a) . encode
 -- --------------------------------------------------------------------------
 -- Decoding
 
--- TODO extract context out of DecodeError
+type Trace = [Text]
+
 data DecodeError
-  = InvalidRecordField { name :: Text, context :: [Text]}
-  | MissingRecordField { name :: Text, context :: [Text]}
-  | InvalidEnumValue { given :: Text, options :: NonEmpty Text, context :: [Text]}
-  | InvalidConstructor { name :: Text, context :: [Text]}
-  | InvalidUnionType { contents :: Value, context :: [Text]}
-  | SchemaMismatch {context :: [Text]}
-  | InvalidAlt {context :: [Text], path :: Path}
-  | PrimError {context :: [Text], primError :: String}
+  = InvalidRecordField { name :: Text}
+  | MissingRecordField { name :: Text}
+  | InvalidEnumValue { given :: Text, options :: NonEmpty Text}
+  | InvalidConstructor { name :: Text}
+  | InvalidUnionType { contents :: Value}
+  | SchemaMismatch
+  | InvalidAlt {path :: Path}
+  | PrimError {primError :: String}
   deriving (Eq, Show)
 
 -- | Given a JSON 'Value' and a typed schema, extract a Haskell value
-decodeWith :: TypedSchemaFlex from a -> Value -> Either DecodeError a
+decodeWith :: TypedSchemaFlex from a -> Value -> Either (Trace, DecodeError) a
 decodeWith = go []
- where
-  go :: [Text] -> TypedSchemaFlex from a -> Value -> Either DecodeError a
-  go ctx (TEnum opts _) (A.String x) =
-    maybe (Left $ InvalidEnumValue x (fst <$> opts) ctx) pure $ lookup x opts
-  go ctx (TArray sc tof _) (A.Array x) =
-    tof <$> traverse (go ("[]" : ctx) sc) x
-  go ctx (TMap sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
-  go _tx (TEmpty a) _ = pure a
-  go ctx (RecordSchema rec) o@A.Object{}
-    | (A.Object fields, encodedPath) <- decodeAlternatives o = fromMaybe
-      (Left $ InvalidAlt ctx encodedPath)
-      (selectPath encodedPath (getCompose $ runAlt (Compose . (: []) . f fields) rec))
-   where
-    f :: A.Object -> RecordField from a -> Either DecodeError a
-    f fields (RequiredAp n sc) = doRequiredField ctx n sc fields
-    f fields (OptionalAp n sc _ to) = case Map.lookup n fields of
-        Just v  -> to . Just <$> go (n : ctx) sc v
-        Nothing -> pure $ to Nothing
+    where
+        go :: [Text] -> TypedSchemaFlex from a -> Value -> Either (Trace, DecodeError) a
+        go ctx (TEnum opts _) (A.String x) =
+            maybe (Left (ctx, InvalidEnumValue x (fst <$> opts))) pure $ lookup x opts
+        go ctx (TArray sc tof _) (A.Array  x) = tof <$> traverse (go ("[]" : ctx) sc) x
+        go ctx (TMap   sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
+        go _tx (TEmpty a       ) _            = pure a
+        go ctx (RecordSchema rec) o@A.Object{}
+            | (A.Object fields, encodedPath) <- decodeAlternatives o = fromMaybe
+                (Left (ctx, InvalidAlt encodedPath))
+                (selectPath encodedPath (getCompose $ runAlt (Compose . (: []) . f fields) rec))
+            where
+                f :: A.Object -> RecordField from a -> Either (Trace, DecodeError) a
+                f fields (RequiredAp n sc) = case Map.lookup n fields of
+                    Just v  -> go (n : ctx) sc v
+                    Nothing -> case sc of
+                        TArray _ tof' _ -> pure $ tof' []
+                        _               -> Left (ctx, MissingRecordField n)
+                f fields (OptionalAp n sc _ to) = case Map.lookup n fields of
+                    Just v  -> to . Just <$> go (n : ctx) sc v
+                    Nothing -> pure $ to Nothing
 
-  go _tx (UnionSchema opts _) (A.String n)
-    | Just (TEmpty a) <- lookup n opts = pure a
-  go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
-    [(n, v)] -> case lookup n opts of
-      Just sc -> go (n : ctx) sc v
-      Nothing -> Left $ InvalidConstructor n ctx
-    _ -> Left $ InvalidUnionType it ctx
-  go ctx (TOr a b) (A.Object x) = do
-    let l = Map.lookup "L" x <&> go ("L":ctx) a
-    let r = Map.lookup "R" x <&> go ("R":ctx) b
-    fromMaybe (Left $ SchemaMismatch ctx) $ l <|> r
-  go ctx (TPrim tof _) x = case tof x of
-    A.Error e   -> Left (PrimError ctx e)
-    A.Success a -> pure a
-  go ctx _ _ = Left $ SchemaMismatch ctx
+        go _tx (UnionSchema opts _) (A.String n) | Just (TEmpty a) <- lookup n opts = pure a
+        go ctx (UnionSchema opts _) it@(A.Object x) = case Map.toList x of
+            [(n, v)] -> case lookup n opts of
+                Just sc -> go (n : ctx) sc v
+                Nothing -> Left (ctx, InvalidConstructor n)
+            _ -> Left (ctx, InvalidUnionType it)
+        go ctx (TOr a b) (A.Object x) = do
+            let l = Map.lookup "L" x <&> go ("L" : ctx) a
+            let r = Map.lookup "R" x <&> go ("R" : ctx) b
+            fromMaybe (Left (ctx, SchemaMismatch)) $ l <|> r
+        go ctx (TPrim tof _) x = case tof x of
+            A.Error   e -> Left (ctx, PrimError e)
+            A.Success a -> pure a
+        go ctx _ _ = Left (ctx, SchemaMismatch)
 
-  doRequiredField
-    :: [Text]
-    -> Text
-    -> TypedSchemaFlex from b
-    -> HashMap Text Value
-    -> Either DecodeError b
-  doRequiredField ctx n sc fields = case Map.lookup n fields of
-    Just v  -> go (n : ctx) sc v
-    Nothing -> case sc of
-      TArray _ tof' _ -> pure $ tof' []
-      _               -> Left $ MissingRecordField n ctx
-
-decode :: HasSchema a => Value -> Either DecodeError a
+decode :: HasSchema a => Value -> Either (Trace, DecodeError) a
 decode = decodeWith schema
 
-decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either DecodeError a)
+decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either (Trace, DecodeError) a)
 decodeFromWith sc source = case source `isSubtypeOf` extractSchema sc of
   Just cast -> Just $ decodeWith sc . cast
   Nothing -> Nothing
 
-decodeFrom :: HasSchema a => Schema -> Maybe (Value -> Either DecodeError a)
+decodeFrom :: HasSchema a => Schema -> Maybe (Value -> Either (Trace, DecodeError) a)
 decodeFrom = decodeFromWith schema
 
 type Path = [Bool]
