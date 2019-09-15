@@ -354,7 +354,7 @@ finite = go
   go d (Union     opts) = Union (fmap (go (max 0 (pred d))) opts)
   go d (Array     sc  ) = Array (go (max 0 (pred d)) sc)
   go d (StringMap sc  ) = StringMap (go (max 0 (pred d)) sc)
-  go d (Or a b        ) = Or (finite (d - 1) a) (finite (d - 1) b)
+  go d (Or a b        ) = let d' = max 0 (pred d) in Or (finite d' a) (finite d' b)
   go _ other            = other
 
 -- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
