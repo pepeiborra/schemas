@@ -7,7 +7,14 @@
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
-module Schemas.SOP where
+module Schemas.SOP
+  ( gSchema
+  , gRecordFields
+  , Options(..)
+  , defOptions
+  , FieldEncode
+  )
+where
 
 import           Control.Alternative.Free
 import qualified Data.List.NonEmpty       as NE
@@ -33,6 +40,12 @@ gSchema opts = case datatypeInfo (Proxy @a) of
     (Newtype _ _ ci       ) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
     (ADT _ _ (ci :* Nil) _) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
     (ADT _ _ cis         _) -> dimap (unSOP . from) (to . SOP) $ gSchemaNS opts cis
+
+gRecordFields :: forall a xs. (HasDatatypeInfo a, All FieldEncode xs, Code a ~ '[xs]) => Options -> RecordFields a a
+gRecordFields opts = case datatypeInfo (Proxy @a) of
+    (Newtype _ _ ci       ) -> hoistAlt (lmap (unZ . unSOP . from)) $ fmap (to . SOP . Z) $ gRecordFields' opts ci
+    (ADT _ _ (ci :* Nil) _) -> hoistAlt (lmap (unZ . unSOP . from)) $ fmap (to . SOP . Z) $ gRecordFields' opts ci
+
 
 gSchemaNS :: forall xss . All2 FieldEncode xss => Options -> NP ConstructorInfo xss -> TypedSchema (NS (NP I) xss)
 gSchemaNS opts =
@@ -61,8 +74,15 @@ gSchemaNP
     => Options
     -> ConstructorInfo xs
     -> TypedSchema (NP I xs)
-gSchemaNP opts ci =
-  record $
+gSchemaNP opts = record . gRecordFields' opts
+
+gRecordFields'
+    :: forall (xs :: [*])
+     . (All FieldEncode xs)
+    => Options
+    -> ConstructorInfo xs
+    -> RecordFields (NP I xs) (NP I xs)
+gRecordFields' opts ci =
   hsequence $
   hczipWith fieldSchemaC mk fieldNames projections
   where
