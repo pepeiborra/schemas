@@ -14,11 +14,12 @@ module Schemas
   , theSchema
   , extractSchema
   -- ** Construction
-  , prim
   , enum
   , readShow
   , list
   , stringMap
+  , viaJSON
+  , viaIso
   , Key(..)
   -- *** Applicative record definition
   , record

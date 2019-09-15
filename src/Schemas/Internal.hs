@@ -113,8 +113,11 @@ stringMap sc = TMap sc id id
 list :: TypedSchema a -> TypedSchema [a]
 list schema = TArray schema V.toList V.fromList
 
-prim :: (A.FromJSON a, A.ToJSON a) => TypedSchema a
-prim = TPrim A.fromJSON A.toJSON
+viaJSON :: (A.FromJSON a, A.ToJSON a) => TypedSchema a
+viaJSON = TPrim A.fromJSON A.toJSON
+
+viaIso :: Iso' a b -> TypedSchema a -> TypedSchema b
+viaIso iso sc = withIso iso $ \from to -> dimap to from sc
 
 readShow :: (Read a, Show a) => TypedSchema a
 readShow = dimap show read schema
@@ -258,28 +261,28 @@ instance HasSchema () where
   schema = mempty
 
 instance HasSchema Bool where
-  schema = prim
+  schema = viaJSON
 
 instance HasSchema Double where
-  schema = prim
+  schema = viaJSON
 
 instance HasSchema Scientific where
-  schema = prim
+  schema = viaJSON
 
 instance HasSchema Int where
-  schema = prim
+  schema = viaJSON
 
 instance HasSchema Integer where
-  schema = prim
+  schema = viaJSON
 
 instance HasSchema Natural where
-  schema = prim
+  schema = viaJSON
 
 instance {-# OVERLAPPING #-} HasSchema String where
-  schema = prim
+  schema = viaJSON
 
 instance HasSchema Text where
-  schema = prim
+  schema = viaJSON
 
 instance {-# OVERLAPPABLE #-} HasSchema a => HasSchema [a] where
   schema = TArray schema V.toList V.fromList
@@ -312,7 +315,7 @@ instance HasSchema Schema where
     ]
 
 instance HasSchema Value where
-  schema = prim
+  schema = viaJSON
 
 instance (HasSchema a, HasSchema b) => HasSchema (a,b) where
   schema = record $ (,) <$> field "$1" fst <*> field "$2" snd
@@ -449,7 +452,7 @@ data DecodeError
   | InvalidUnionType { contents :: Value}
   | SchemaMismatch
   | InvalidAlt {path :: Path}
-  | PrimError {primError :: String}
+  | PrimError {viaJSONError :: String}
   | TriedAndFailed
   deriving (Eq, Show)
 
