@@ -177,7 +177,7 @@ data OptFieldE = OptFieldE
  deriving (Exception, Show, Typeable)
 
 optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
-optField n get = optFieldWith (lmap get $ liftMaybe (schema @a)) n
+optField n get = optFieldGeneral (lmap get $ liftMaybe (schema @a)) n (isJust . get) Nothing
 
 -- | Use this to build schemas for 'optFieldWith'. The resulting schema fails cleanly for the Nothing case
 liftMaybe :: TypedSchema a -> TypedSchema (Maybe a)
@@ -186,6 +186,7 @@ liftMaybe = liftMaybe' OptFieldE
 liftMaybe' :: Exception e => e -> TypedSchema a -> TypedSchema (Maybe a)
 liftMaybe' e schema = rmap Just (TTry schema (maybe (Left $ toException e) Right))
 
+-- | A generalized version of 'optField'. Does not handle infinite/circular data.
 optFieldWith
     :: forall a from
      . TypedSchemaFlex from (Maybe a)
@@ -203,7 +204,8 @@ optFieldEither
     -> (from -> Either e a)
     -> e
     -> RecordFields from (Either e a)
-optFieldEither n from = optFieldEitherWith (lmap from $ liftEither schema) n
+optFieldEither n from e =
+  optFieldGeneral (lmap from $ liftEither schema) n (isRight . from) (Left e)
 
 -- | Use this to build schemas for 'optFieldEitherWith'. The resulting schema fails cleanly for the Left case
 liftEither :: TypedSchema a -> TypedSchema (Either b a)
@@ -212,6 +214,7 @@ liftEither = liftEither' OptFieldE
 liftEither' :: Exception e => e -> TypedSchema a -> TypedSchema (Either b a)
 liftEither' e schema = rmap Right (TTry schema (either (const $ Left $ toException e) Right))
 
+-- | A generalized version of 'optFieldEither'. Does not handle infinite/circular data
 optFieldEitherWith
     :: TypedSchemaFlex from (Either e a) -> Text -> e -> RecordFields from (Either e a)
 optFieldEitherWith schema n e = optFieldGeneral schema n (either (const False) isRight . runSchema schema) (Left e)
@@ -450,12 +453,13 @@ data DecodeError
   | TriedAndFailed
   deriving (Eq, Show)
 
-runSchema :: TypedSchemaFlex from a -> from -> Either [DecodeError] a
+-- | Runs a schema as a function @enc -> dec@. Loops for infinite/circular data
+runSchema :: TypedSchemaFlex enc dec -> enc -> Either [DecodeError] dec
 runSchema sc = runExcept . go sc
     where
         go :: forall from a. TypedSchemaFlex from a -> from -> Except [DecodeError] a
         go (TEmpty a       ) _    = pure a
-        go (TTry sc try) from = go sc =<< either (const $ failWith TriedAndFailed) return (try from)
+        go (TTry sc try) from = either (const $ failWith TriedAndFailed) (go sc) (try from)
         go (TPrim toF fromF) from = case toF (fromF from) of
             A.Success a -> pure a
             A.Error   e -> failWith (PrimError e)
