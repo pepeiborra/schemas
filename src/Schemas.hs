@@ -34,6 +34,8 @@ module Schemas
   , optFieldEitherWith
   , optFieldGeneral
   , fieldName
+  , fieldNameL
+  , overFieldNames
   , extractFields
   , liftMaybe
   , liftEither

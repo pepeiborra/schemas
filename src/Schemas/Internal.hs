@@ -156,6 +156,10 @@ data RecordField from a where
                 , fieldDefValue :: a
                 } -> RecordField from a
 
+fieldNameL :: Lens' (RecordField from a) Text
+fieldNameL f (RequiredAp n sc) = (`RequiredAp` sc) <$> f n
+fieldNameL f (OptionalAp n sc opt def) = (\n -> OptionalAp n sc opt def) <$> f n
+
 instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
   dimap f g (OptionalAp name sc opt def) = OptionalAp name (dimap f g sc) (opt . f) (g def)
@@ -165,6 +169,9 @@ newtype RecordFields from a = RecordFields {getRecordFields :: Alt (RecordField 
 
 instance Profunctor RecordFields where
   dimap f g = RecordFields . hoistAlt (lmap f) . fmap g . getRecordFields
+
+overFieldNames :: (Text -> Text) -> RecordFields from a -> RecordFields from a
+overFieldNames f = RecordFields . hoistAlt ((over fieldNameL f)) . getRecordFields
 
 -- | Define a record schema using applicative syntax
 record :: RecordFields from a -> TypedSchemaFlex from a
