@@ -43,8 +43,8 @@ gSchema opts = case datatypeInfo (Proxy @a) of
 
 gRecordFields :: forall a xs. (HasDatatypeInfo a, All FieldEncode xs, Code a ~ '[xs]) => Options -> RecordFields a a
 gRecordFields opts = case datatypeInfo (Proxy @a) of
-    (Newtype _ _ ci       ) -> hoistAlt (lmap (unZ . unSOP . from)) $ fmap (to . SOP . Z) $ gRecordFields' opts ci
-    (ADT _ _ (ci :* Nil) _) -> hoistAlt (lmap (unZ . unSOP . from)) $ fmap (to . SOP . Z) $ gRecordFields' opts ci
+    (Newtype _ _ ci       ) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gRecordFields' opts ci
+    (ADT _ _ (ci :* Nil) _) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gRecordFields' opts ci
 
 
 gSchemaNS :: forall xss . All2 FieldEncode xss => Options -> NP ConstructorInfo xss -> TypedSchema (NS (NP I) xss)
@@ -86,7 +86,7 @@ gRecordFields' opts ci =
   hsequence $
   hczipWith fieldSchemaC mk fieldNames projections
   where
-    mk :: (FieldEncode x) => K String x -> Projection I xs x -> Alt (RecordField (NP I xs)) x
+    mk :: (FieldEncode x) => K String x -> Projection I xs x -> RecordFields (NP I xs) x
     mk (K theFieldName) (Fn proj) =
       fieldEncoder (pack $ fieldLabelModifier opts theFieldName) (dimap K unI proj)
 
@@ -101,7 +101,7 @@ gRecordFields' opts ci =
       SNil  -> Nil
       SCons -> K no :* numbers (no + 1)
 
-class FieldEncode a where fieldEncoder :: Text -> (from -> a) -> Alt(RecordField from) a
+class FieldEncode a where fieldEncoder :: Text -> (from -> a) -> RecordFields from a
 
 instance {-# OVERLAPPABLE #-} HasSchema a => FieldEncode a where fieldEncoder = field
 instance HasSchema a => FieldEncode (Maybe a) where fieldEncoder = optField

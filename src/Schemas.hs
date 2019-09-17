@@ -23,7 +23,6 @@ module Schemas
   , Key(..)
   -- *** Applicative record definition
   , record
-  , Alt
   , RecordField
   , RecordFields
   , field

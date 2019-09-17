@@ -1,56 +1,56 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE AllowAmbiguousTypes   #-}
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveFunctor         #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE DerivingStrategies    #-}
-{-# LANGUAGE DerivingVia           #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE OverloadedLabels      #-}
-{-# LANGUAGE OverloadedLists       #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TupleSections         #-}
-{-# LANGUAGE ViewPatterns          #-}
+{-# LANGUAGE AllowAmbiguousTypes        #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveFunctor              #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE DuplicateRecordFields      #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedLabels           #-}
+{-# LANGUAGE OverloadedLists            #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TupleSections              #-}
 {-# OPTIONS -Wno-name-shadowing    #-}
 module Schemas.Internal where
 
 import           Control.Alternative.Free
-import           Control.Applicative      (Alternative (..))
+import           Control.Applicative        (Alternative (..))
 import           Control.Exception
-import           Control.Lens             hiding (Empty, enum)
+import           Control.Lens               hiding (Empty, enum)
 import           Control.Monad
 import           Control.Monad.Trans.Except
-import           Data.Aeson               (Value)
-import qualified Data.Aeson               as A
+import           Data.Aeson                 (Value)
+import qualified Data.Aeson                 as A
 import           Data.Aeson.Lens
 import           Data.Biapplicative
 import           Data.Either
 import           Data.Functor.Compose
-import           Data.Generics.Labels     ()
+import           Data.Generics.Labels       ()
 import           Data.Hashable
-import           Data.HashMap.Strict      (HashMap)
-import qualified Data.HashMap.Strict      as Map
-import           Data.HashSet             (HashSet)
-import qualified Data.HashSet             as Set
-import           Data.List                (find)
-import           Data.List.NonEmpty       (NonEmpty (..))
-import qualified Data.List.NonEmpty       as NE
+import           Data.HashMap.Strict        (HashMap)
+import qualified Data.HashMap.Strict        as Map
+import           Data.HashSet               (HashSet)
+import qualified Data.HashSet               as Set
+import           Data.List                  (find)
+import           Data.List.NonEmpty         (NonEmpty (..))
+import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
 import           Data.Scientific
-import           Data.Text                (Text, pack, unpack)
+import           Data.Text                  (Text, pack, unpack)
 import           Data.Tuple
-import           Data.Typeable            (Typeable)
-import           Data.Vector              (Vector)
-import qualified Data.Vector              as V
-import           GHC.Exts                 (fromList)
-import           GHC.Generics             (Generic)
+import           Data.Typeable              (Typeable)
+import           Data.Vector                (Vector)
+import qualified Data.Vector                as V
+import           GHC.Exts                   (fromList)
+import           GHC.Generics               (Generic)
 import           Numeric.Natural
-import           Prelude                  hiding (lookup)
+import           Prelude                    hiding (lookup)
 
 -- Schemas
 -- --------------------------------------------------------------------------------
@@ -133,7 +133,7 @@ instance Profunctor TypedSchemaFlex where
     dimap g f (TArray      sc tof fromf) = TArray sc (f . tof) (fromf . g)
     dimap g f (TMap        sc tof fromf) = TMap sc (f . tof) (fromf . g)
     dimap g f (TPrim          tof fromf) = TPrim (fmap f . tof) (fromf . g)
-    dimap g f (RecordSchema sc) = RecordSchema (f <$> hoistAlt (dimap g id) sc)
+    dimap g f (RecordSchema sc) = RecordSchema (dimap g f sc)
     dimap g f (UnionSchema tags getTag ) = UnionSchema (second (dimap g f) <$> tags) (getTag . g)
 
 instance Monoid a => Monoid (TypedSchemaFlex f a) where
@@ -160,11 +160,15 @@ data RecordField from a where
                 , fieldDefValue :: a
                 } -> RecordField from a
 
-type RecordFields from a = Alt (RecordField from) a
-
 instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
   dimap f g (OptionalAp name sc opt def) = OptionalAp name (dimap f g sc) (opt . f) (g def)
+
+newtype RecordFields from a = RecordFields {getRecordFields :: Alt (RecordField from) a}
+  deriving newtype (Alternative, Applicative, Functor, Monoid, Semigroup)
+
+instance Profunctor RecordFields where
+  dimap f g = RecordFields . hoistAlt (lmap f) . fmap g . getRecordFields
 
 -- | Define a record schema using applicative syntax
 record :: RecordFields from a -> TypedSchemaFlex from a
@@ -177,7 +181,7 @@ fieldWith :: TypedSchema a -> Text -> (from -> a) -> RecordFields from a
 fieldWith schema n get = fieldWith' (lmap get schema) n
 
 fieldWith' :: TypedSchemaFlex from a -> Text -> RecordFields from a
-fieldWith' schema n = liftAlt (RequiredAp n schema)
+fieldWith' schema n = RecordFields $ liftAlt (RequiredAp n schema)
 
 data OptFieldE = OptFieldE
  deriving (Exception, Show, Typeable)
@@ -197,11 +201,11 @@ optFieldWith
     :: forall a from
      . TypedSchemaFlex from (Maybe a)
     -> Text
-    -> Alt (RecordField from) (Maybe a)
+    -> RecordFields from (Maybe a)
 optFieldWith schema n = optFieldGeneral schema n (isJust . either (const Nothing) id . runSchema schema) Nothing
 
-optFieldGeneral :: TypedSchemaFlex from a -> Text -> (from -> Bool) -> a -> Alt (RecordField from) a
-optFieldGeneral schema n opt def = liftAlt (OptionalAp n schema opt def)
+optFieldGeneral :: TypedSchemaFlex from a -> Text -> (from -> Bool) -> a -> RecordFields from a
+optFieldGeneral schema n opt def = RecordFields $ liftAlt (OptionalAp n schema opt def)
 
 optFieldEither
     :: forall a from e
@@ -227,7 +231,7 @@ optFieldEitherWith schema n e = optFieldGeneral schema n (either (const False) i
 
 -- | Extract all the field groups (from alternatives) in the record
 extractFields :: RecordFields from a -> [[(Text, Field)]]
-extractFields = runAlt_ ((:[]) . (:[]) . extractField)
+extractFields = runAlt_ ((:[]) . (:[]) . extractField) . getRecordFields
   where
     extractField :: RecordField from a -> (Text, Field)
     extractField (RequiredAp n sc) = (n,) . (`Field` Nothing) $ extractSchema sc
@@ -407,7 +411,7 @@ encodeWith (TArray      sc  _ fromf) b = A.Array (encodeWith sc <$> fromf b)
 encodeWith (TMap        sc  _ fromf) b = A.Object (encodeWith sc <$> fromf b)
 encodeWith (RecordSchema rec) x = encodeAlternatives $ fmap (A.Object . fromList) fields
             where
-                fields = runAlt_ (maybe [[]] ((: []) . (: [])) . extractFieldAp x) rec
+                fields = runAlt_ (maybe [[]] ((: []) . (: [])) . extractFieldAp x) (getRecordFields rec)
 
                 extractFieldAp b RequiredAp{..} = Just (fieldName, encodeWith fieldTypedSchema b)
                 extractFieldAp b OptionalAp{..} = if fieldOpt b
@@ -476,7 +480,7 @@ runSchema sc = runExcept . go sc
         go (TMap   _sc toF fromF) from = pure $ toF (fromF from)
         go (TArray _sc toF fromF) from = pure $ toF (fromF from)
         go (TOr a b             ) from = go a from <|> go b from
-        go (RecordSchema fields ) from = runAlt f fields
+        go (RecordSchema fields ) from = runAlt f (getRecordFields fields)
             where
                 f :: RecordField from b -> Except [DecodeError] b
                 f RequiredAp{..} = go fieldTypedSchema from
@@ -502,7 +506,7 @@ decodeWith = go []
         go ctx (RecordSchema rec) o@A.Object{}
             | (A.Object fields, encodedPath) <- decodeAlternatives o = fromMaybe
                 (Left (ctx, InvalidAlt encodedPath))
-                (selectPath encodedPath (getCompose $ runAlt (Compose . (: []) . f fields) rec))
+                (selectPath encodedPath (getCompose $ runAlt (Compose . (: []) . f fields) (getRecordFields rec)))
             where
                 f :: A.Object -> RecordField from a -> Either (Trace, DecodeError) a
                 f fields (RequiredAp n sc) = case Map.lookup n fields of
@@ -536,7 +540,7 @@ decode = decodeWith schema
 decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either (Trace, DecodeError) a)
 decodeFromWith sc source = case source `isSubtypeOf` extractSchema sc of
   Just cast -> Just $ decodeWith sc . cast
-  Nothing -> Nothing
+  Nothing   -> Nothing
 
 decodeFrom :: HasSchema a => Schema -> Maybe (Value -> Either (Trace, DecodeError) a)
 decodeFrom = decodeFromWith schema
