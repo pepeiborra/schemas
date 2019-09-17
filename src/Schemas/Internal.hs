@@ -337,18 +337,22 @@ instance (Eq key, Hashable key, HasSchema a, Key key) => HasSchema (HashMap key 
   schema = dimap toKeyed fromKeyed $ stringMap schema
     where
       fromKeyed :: HashMap Text a -> HashMap key a
-      fromKeyed = Map.fromList . map (first $ view (from $ keyIso @key)) . Map.toList
+      fromKeyed = Map.fromList . map (first fromKey) . Map.toList
       toKeyed :: HashMap key a -> HashMap Text a
-      toKeyed = Map.fromList . map (first $ view (keyIso @key)) . Map.toList
+      toKeyed = Map.fromList . map (first toKey) . Map.toList
 
 class Key a where
-  keyIso :: Iso' a Text
-
-instance Key String where
-  keyIso = iso pack unpack
+  fromKey :: Text -> a
+  toKey :: a -> Text
 
 instance Key Text where
-  keyIso = id
+  fromKey = id
+  toKey = id
+
+instance Key String where
+  fromKey = unpack
+  toKey   = pack
+
 -- --------------------------------------------------------------------------------
 -- Finite schemas
 
