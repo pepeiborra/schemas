@@ -1,10 +1,13 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Schemas
  (
   -- * Schemas
     Field(..)
-  , Schema(..)
+  , Schema(.., Union)
+  , _Union
   -- ** functions for working with schemas
   , isSubtypeOf
+  , versions
   , coerce
   , finite
   -- * Typed schemas
@@ -17,6 +20,7 @@ module Schemas
   , enum
   , readShow
   , list
+  , vector
   , stringMap
   , viaJSON
   , viaIso
@@ -44,6 +48,7 @@ module Schemas
   , union'
   , UnionTag(..)
   , alt
+  , altWith
   -- * Encoding
   , encode
   , decode
@@ -62,6 +67,5 @@ module Schemas
   )
   where
 
-import Control.Alternative.Free
 import Data.Profunctor
 import Schemas.Internal

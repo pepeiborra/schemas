@@ -16,7 +16,6 @@ module Schemas.SOP
   )
 where
 
-import           Control.Alternative.Free
 import qualified Data.List.NonEmpty       as NE
 import           Data.Maybe
 import           Data.Profunctor
@@ -60,11 +59,10 @@ gSchemaNS opts =
             => Injection (NP I) xss xs
             -> Ejection (NP I) xss xs
             -> ConstructorInfo xs
-            -> K (Text, TypedSchema (NS (NP I) xss), NS (NP I) xss -> Bool) xs
+            -> K (Text, TypedSchema (NS (NP I) xss)) xs
         mk (Fn inject) (Fn eject) ci = K
             ( cons
-            , dimap (fromJust . unComp . eject . K) (unK . inject) (gSchemaNP opts ci)
-            , isJust . unComp . eject . K
+            , dimap (unComp . eject . K) (unK . inject . fromJust) (liftMaybe $ gSchemaNP opts ci)
             )
             where cons = pack (constructorTagModifier opts (constructorName ci))
 

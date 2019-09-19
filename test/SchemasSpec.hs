@@ -15,6 +15,7 @@ import Schemas
 import System.Timeout
 import Test.Hspec
 import Test.Hspec.QuickCheck
+import Test.QuickCheck
 import Text.Show.Functions ()
 
 spec :: Spec
@@ -22,39 +23,45 @@ spec = do
   describe "encoding" $ do
     prop "is the inverse of decoding" $ \(sc :: Schema) ->
       decode (encode sc) `shouldBe` Right sc
+  describe "versions" $ do
+    prop "eliminates AllOf" $ \sc -> all (not . hasAllOf) (versions sc)
   describe "finite" $ do
-    prop "always produces a supertype" $ \(sc :: Schema) (SmallNatural size) ->
-      sc `isSubtypeOf` finite size sc `shouldSatisfy` isJust
+    it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
+      isSubtypeOf sc sc `shouldSatisfy` isJust
+    it "always produces a supertype (in absence of OneOf)" $
+      forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
+      forAll arbitrary $ \(SmallNatural size) ->
+      all (\sc -> isJust $ sc `isSubtypeOf` finite size sc) (versions sc)
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
-      Record [makeField "a" Prim Nothing, makeField "def" Prim Nothing]
-        `shouldBeSubtypeOf` Record [makeField "def" Prim Nothing]
-      Record [makeField "a" Prim (Just False), makeField "def" Prim Nothing]
-        `shouldBeSubtypeOf` Record [makeField "def" Prim Nothing]
+      Record [makeField "a" Prim True, makeField "def" Prim True]
+        `shouldBeSubtypeOf` Record [makeField "def" Prim True]
+      Record [makeField "a" Prim False, makeField "def" Prim True]
+        `shouldBeSubtypeOf` Record [makeField "def" Prim True]
     it "subtypes cannot turn a Required makeField into Optional" $ do
-      Record [makeField "a" Prim (Just False)]
-        `shouldNotBeSubtypeOf` Record [makeField "a" Prim Nothing]
+      Record [makeField "a" Prim False]
+        `shouldNotBeSubtypeOf` Record [makeField "a" Prim True]
     it "subtypes can turn an Optional makeField into Required" $ do
-      Record [makeField "a" Prim Nothing]
-        `shouldBeSubtypeOf` Record [makeField "a" Prim (Just False)]
+      Record [makeField "a" Prim True]
+        `shouldBeSubtypeOf` Record [makeField "a" Prim False]
     it "subtypes can relax the type of a field" $ do
-      Record [makeField "a" (Array Prim) Nothing]
-        `shouldBeSubtypeOf` Record [makeField "a" Prim Nothing]
+      Record [makeField "a" (Array Prim) True]
+        `shouldBeSubtypeOf` Record [makeField "a" Prim True]
     it "subtypes cannot remove Required fields" $ do
-      Record [makeField "def" Prim Nothing] `shouldNotBeSubtypeOf` Record
-        [makeField "def" Prim Nothing, makeField "a" Prim Nothing]
+      Record [makeField "def" Prim True] `shouldNotBeSubtypeOf` Record
+        [makeField "def" Prim True, makeField "a" Prim True]
     it "subtypes can remove Optional fields" $ do
-      Record [makeField "def" Prim Nothing] `shouldBeSubtypeOf` Record
-        [makeField "def" Prim Nothing, makeField "a" Prim (Just False)]
+      Record [makeField "def" Prim True] `shouldBeSubtypeOf` Record
+        [makeField "def" Prim True, makeField "a" Prim (False)]
     it "subtypes can add enum choices" $ do
       Enum ["A", "def"] `shouldBeSubtypeOf` Enum ["def"]
     it "subtypes cannot remove enum choices" $ do
       Enum ["def"] `shouldNotBeSubtypeOf` Enum ["A"]
-    it "subtypes can add constructors" $ do
-      Union [constructor' "A" Prim, constructor' "def" Empty]
-        `shouldBeSubtypeOf` Union [constructor' "def" Empty]
-    it "subtypes cannot remove constructors" $ do
-      Union [constructor' "def" Empty]
+    it "subtypes can remove constructors" $ do
+      Union [constructor' "B" Empty]
+        `shouldBeSubtypeOf` Union [constructor' "A" Empty, constructor' "B" Empty]
+    it "subtypes cannot add constructors" $ do
+      Union [constructor' "A" Prim, constructor' "B" Empty]
         `shouldNotBeSubtypeOf` Union [constructor' "A" (Prim)]
     it "subtypes can expand an array" $ do
       Array Prim `shouldBeSubtypeOf` Prim
@@ -101,7 +108,7 @@ shouldNotBeSubtypeOf a b = case a `isSubtypeOf` b of
 shouldNotLoop :: (Show a, Eq a) => IO a -> Expectation
 shouldNotLoop act = timeout 1000000 act `shouldNotReturn` Nothing
 
-makeField :: a -> Schema -> Maybe Bool -> (a, Field)
+makeField :: a -> Schema -> Bool -> (a, Field)
 makeField n t isReq = (n, Field t isReq)
 
 constructor' :: a -> b -> (a, b)

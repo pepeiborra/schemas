@@ -60,6 +60,7 @@ test-suite spec
                      , generic-lens
                      , generics-sop
                      , hspec
+                     , lens
                      , pretty-simple
                      , QuickCheck
                      , schemas

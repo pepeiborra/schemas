@@ -48,39 +48,60 @@ pepe = Person
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> B.putStrLn $ encodePretty $ encode pepe
 -- {
---     "studies": {
---         "PhD": "Computer Science"
---     },
 --     "addresses": [
 --         "2 Edward Square",
 --         "La Mar 10"
 --     ],
 --     "age": 38,
+--     "studies": {
+--         "PhD": "Computer Science"
+--     },
 --     "name": "Pepe"
 -- }
 
 -- >>> B.putStrLn $ encodePretty $ encode (theSchema @Person)
 -- {
 --     "Record": {
---         "studies": {
+--         "addresses": {
 --             "schema": {
---                 "Union": {
---                     "PhD": "String",
---                     "Degree": "String",
---                     "NoEducation": "Empty"
+--                 "Array": {
+--                     "Prim": "String"
 --                 }
 --             }
 --         },
---         "addresses": {
+--         "age": {
 --             "schema": {
---                 "Array": "String"
+--                 "Prim": "Int"
 --             }
 --         },
---         "age": {
---             "schema": "Number"
+--         "studies": {
+--             "schema": {
+--                 "Union": [
+--                     {
+--                         "schema": {
+--                             "Empty": {}
+--                         },
+--                         "constructor": "NoEducation"
+--                     },
+--                     {
+--                         "schema": {
+--                             "Prim": "String"
+--                         },
+--                         "constructor": "PhD"
+--                     },
+--                     {
+--                         "schema": {
+--                             "Prim": "String"
+--                         },
+--                         "constructor": "Degree"
+--                     }
+--                 ]
+--             }
 --         },
 --         "name": {
---             "schema": "String"
+--             "schema": {
+--                 "Prim": "String"
+--             }
 --         }
 --     }
 -- }
@@ -99,31 +120,3 @@ pepe = Person
 --             ( PhD { unPhD = "Computer Science" } )
 --         }
 --     )
-
--- >>> import Data.Aeson.Encode.Pretty
--- >>> import qualified Data.ByteString.Lazy.Char8 as B
--- >>> B.putStrLn $ encodePretty $ encode (extractSchema applicativePersonSchema)
--- {
---     "Record": {
---         "studies": {
---             "schema": {
---                 "Union": {
---                     "PhD": "String",
---                     "Degree": "String",
---                     "NoEducation": "Empty"
---                 }
---             }
---         },
---         "addresses": {
---             "schema": {
---                 "Array": "String"
---             }
---         },
---         "age": {
---             "schema": "Number"
---         },
---         "name": {
---             "schema": "String"
---         }
---     }
--- }
