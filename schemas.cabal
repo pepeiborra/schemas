@@ -16,8 +16,10 @@ extra-source-files:  CHANGELOG.md
 library
   exposed-modules:
     Schemas
+    Schemas.Class
     Schemas.Internal
     Schemas.SOP
+    Schemas.Untyped
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.12.0.0

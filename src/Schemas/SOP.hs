@@ -21,6 +21,7 @@ import           Data.Maybe
 import           Data.Profunctor
 import           Data.Text                (Text, pack)
 import           Generics.SOP             as SOP
+import           Schemas.Class
 import           Schemas.Internal
 
 data Options = Options

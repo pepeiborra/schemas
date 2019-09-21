@@ -68,4 +68,6 @@ module Schemas
   where
 
 import Data.Profunctor
+import Schemas.Class
 import Schemas.Internal
+import Schemas.Untyped
