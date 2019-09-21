@@ -510,16 +510,8 @@ finiteEncode d = finiteValue d (theSchema @a) . encode
 type Trace = [Text]
 
 data DecodeError
-  = InvalidRecordField { name :: Text}
-  | MissingRecordField { name :: Text}
-  | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
-  | InvalidConstructor { name :: Text}
-  | InvalidUnionType { contents :: Value}
-  | SchemaMismatch
-  | EmptyAllOf
-  | PrimError {viaJSONError :: String}
+  = VE ValidationError
   | TriedAndFailed
-  | InvalidAlt {invalidAltName :: Text}
   deriving (Eq, Show)
 
 -- | Runs a schema as a function @enc -> dec@. Loops for infinite/circular data
@@ -528,7 +520,7 @@ runSchema sc = runExcept . go sc
     where
         go :: forall from a. TypedSchemaFlex from a -> from -> Except [DecodeError] a
         go (TEmpty a       ) _    = pure a
-        go (TTry sc try) from = maybe (failWith TriedAndFailed) (go sc) (try from)
+        go (TTry sc try) from = maybe (throwE [TriedAndFailed]) (go sc) (try from)
         go (TPrim toF fromF) from = case toF (fromF from) of
             A.Success a -> pure a
             A.Error   e -> failWith (PrimError e)
@@ -546,7 +538,7 @@ runSchema sc = runExcept . go sc
                 f RequiredAp{..} = go fieldTypedSchema from
                 f OptionalAp{..} = go fieldTypedSchema from
 
-        failWith = throwE . (:[])
+        failWith e = throwE [VE e]
 
 -- | Given a JSON 'Value' and a typed schema, extract a Haskell value
 decodeWith :: TypedSchemaFlex from a -> Value -> Either [(Trace, DecodeError)] a
@@ -554,7 +546,7 @@ decodeWith :: TypedSchemaFlex from a -> Value -> Either [(Trace, DecodeError)] a
 -- TODO change decode type to reflect partiality due to TTry?
 decodeWith sc = runExcept . go [] sc
  where
-  failWith ctx e = throwE [(reverse ctx, e)]
+  failWith ctx e = throwE [(reverse ctx, VE e)]
 
   go
     :: [Text]
@@ -642,6 +634,53 @@ versions (StringMap sc) = StringMap <$> versions sc
 versions x = [x]
 
 -- ------------------------------------------------------------------------------------------------------
+-- Validation
+
+data ValidationError
+  = MissingRecordField { name :: Text}
+  | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
+  | InvalidConstructor { name :: Text}
+  | InvalidUnionValue { contents :: Value}
+  | SchemaMismatch
+  | EmptyAllOf
+  | PrimError {viaJSONError :: String}
+  | InvalidChoice{choiceNumber :: Int}
+  deriving (Eq, Show)
+
+-- | Structural validation of a JSON value against a schema
+--   Ignores extraneous fields in records
+validate :: Schema -> Value -> [(Trace, ValidationError)]
+validate sc v = either (fmap (first reverse)) (\() -> [])
+  $ runExcept (go [] sc v) where
+  go :: Trace -> Schema -> Value -> Except [(Trace, ValidationError)] ()
+  go _   Prim           _             = pure ()
+  go ctx (StringMap sc) (A.Object xx) = ifor_ xx $ \i -> go (i : ctx) sc
+  go ctx (Array sc) (A.Array xx) =
+    ifor_ xx $ \i -> go (pack ("[" <> show i <> "]") : ctx) sc
+  go ctx (Enum opts) (A.String s) =
+    if s `elem` opts then pure () else throwE [(ctx, InvalidEnumValue s opts)]
+  go ctx (Record ff) (A.Object xx) = ifor_ ff $ \n (Field sc opt) ->
+    case (opt, Map.lookup n xx) of
+      (_   , Just y ) -> go (n : ctx) sc y
+      (True, Nothing) -> pure ()
+      _               -> throwE [(ctx, MissingRecordField n)]
+  go ctx (Union constructors) v@(A.Object xx) = case toList xx of
+    [(n, v)] | Just sc <- lookup n constructors -> go (n : ctx) sc v
+             | otherwise -> throwE [(ctx, InvalidConstructor n)]
+    _ -> throwE [(ctx, InvalidUnionValue v)]
+  go ctx (OneOf scc) v = case decodeAlternatives v of
+    [(v, 0)] -> msum $ fmap (\sc -> go ctx sc v) scc
+    alts     -> msum $ fmap
+      (\(v, n) ->
+        fromMaybe (throwE [(ctx, InvalidChoice n)]) $ selectPath n $ fmap
+          (\sc -> go (pack (show n) : ctx) sc v)
+          (toList scc)
+      )
+      alts
+  go ctx (AllOf scc) v = go ctx (OneOf scc) v
+  go ctx _           _ = throwE [(ctx, SchemaMismatch)]
+
+-- ------------------------------------------------------------------------------------------------------
 -- Subtype relation
 
 -- | @sub `isSubtypeOf` sup@ returns a witness that @sub@ is a subtype of @sup@, i.e. a cast function @sub -> sup@
@@ -652,49 +691,62 @@ versions x = [x]
 --   Nothing
 isSubtypeOf :: Schema -> Schema -> Maybe (Value -> Value)
 isSubtypeOf sub sup = go sup sub
-    where
+ where
         -- TODO go: fix confusing order of arguments
-        go Empty         _         = pure $ const emptyValue
-        go (Array     _) Empty     = pure $ const (A.Array [])
-        go (Record    _) Empty     = pure $ const emptyValue
-        go (StringMap _) Empty     = pure $ const emptyValue
-        go OneOf{}       Empty     = pure $ const emptyValue
-        go (Array a)     (Array b) = do
-            f <- go a b
-            pure $ over (_Array . traverse) f
-        go (StringMap a) (StringMap b) = do
-            f <- go a b
-            pure $ over (_Object . traverse) f
-        go a (Array b) | a == b                               = Just (A.Array . fromList . (: []))
-        go (Enum opts) (Enum opts') | all (`elem` opts') opts = Just id
-        go (Record opts) (Record opts') = do
-            forM_ (Map.toList opts)
-                $ \(n, f@(Field _ _)) -> guard $ not (isRequired f) || Map.member n opts'
-            ff <- forM (Map.toList opts') $ \(n', f'@(Field sc' _)) -> do
-                case Map.lookup n' opts of
-                    Nothing -> do
-                        Just $ over (_Object) (Map.delete n')
-                    Just f@(Field sc _) -> do
-                        guard (not (isRequired f) || isRequired f')
-                        witness <- go sc sc'
-                        Just $ over (_Object . ix n') witness
-            return (foldr (.) id ff)
-        go (AllOf sup) sub = do
-          (i,c) <- msum $ (map. traverse) (`go` sub) (zip [(1::Int)..] (toList sup))
-          return $ \v -> A.object [ ("#" <> pack (show i), c v)]
-        go a (AllOf scc) = asum
-            [go a b <&> \f -> fromMaybe (error $ "failed to upcast an AllOf value due to missing entry: " <> field)
-              . preview (_Object . ix (pack field) . to f)
-            | (i, b) <- zip [(1::Int)..] (NE.toList scc)
-             , let field = "#" <> show i]
-        go (OneOf scc) c = asum [go a c | a <- NE.toList scc]
-        go sup (OneOf [sub]) = go sup sub
-        go sup (OneOf sub) = do
-          _coercions <- traverse (go sup) sub
-          -- how do we know which coercion to use ?
-          Just id
-        go a b | a == b = pure id
-        go a b          = error $ "a: " <> show a <> "\nb:" <> show b
+  go Empty         _         = pure $ const emptyValue
+  go (Array     _) Empty     = pure $ const (A.Array [])
+  go (Record    _) Empty     = pure $ const emptyValue
+  go (StringMap _) Empty     = pure $ const emptyValue
+  go OneOf{}       Empty     = pure $ const emptyValue
+  go (Array a)     (Array b) = do
+    f <- go a b
+    pure $ over (_Array . traverse) f
+  go (StringMap a) (StringMap b) = do
+    f <- go a b
+    pure $ over (_Object . traverse) f
+  go a (Array b) | a == b = Just (A.Array . fromList . (: []))
+  go (Enum opts) (Enum opts') | all (`elem` opts') opts = Just id
+  go (Union opts) (Union opts') = do
+    ff <- forM opts' $ \(n, sc) -> do
+      sc' <- lookup n (toList opts)
+      f   <- go sc sc'
+      return $ over (_Object . ix n) f
+    return (foldr (.) id ff)
+  go (Record opts) (Record opts') = do
+    forM_ (Map.toList opts) $ \(n, f@(Field _ _)) ->
+      guard $ not (isRequired f) || Map.member n opts'
+    ff <- forM (Map.toList opts') $ \(n', f'@(Field sc' _)) -> do
+      case Map.lookup n' opts of
+        Nothing -> do
+          Just $ over (_Object) (Map.delete n')
+        Just f@(Field sc _) -> do
+          guard (not (isRequired f) || isRequired f')
+          witness <- go sc sc'
+          Just $ over (_Object . ix n') witness
+    return (foldr (.) id ff)
+  go (AllOf sup) sub = do
+    (i, c) <- msum $ imap (\i sup' -> (i,) <$> go sup' sub) sup
+    return $ \v -> A.object [("#" <> pack (show i), c v)]
+  go sup (AllOf scc) = asum
+    [ go sup b <&> \f ->
+        fromMaybe
+            (  error
+            $  "failed to upcast an AllOf value due to missing entry: "
+            <> field
+            )
+          . preview (_Object . ix (pack field) . to f)
+    | (i, b) <- zip [(1 :: Int) ..] (NE.toList scc)
+    , let field = "#" <> show i
+    ]
+  go sup (OneOf [sub]) = go sup sub
+  go sup (OneOf sub  ) = do
+    alts <- traverse (\sc -> (sc, ) <$> go sup sc) sub
+    return $ \v -> head $ mapMaybe
+      (\(sc, f) -> if null (validate sc v) then Just (f v) else Nothing)
+      (toList alts)
+  go (OneOf sup) sub = asum $ fmap (`go` sub) sup
+  go a b | a == b  = pure id
+  go _ _           = Nothing
 
 -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
 coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
