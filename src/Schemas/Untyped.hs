@@ -37,8 +37,7 @@ import           Text.Read
 -- --------------------------------------------------------------------------------
 
 data Schema
-  = Empty
-  | Array Schema
+  = Array Schema
   | StringMap Schema
   | Enum   (NonEmpty Text)
   | Record (HashMap Text Field)
@@ -46,7 +45,6 @@ data Schema
   | OneOf (NonEmpty Schema)   -- ^ Decoding works for all alternatives, encoding only for one
   | Prim Text                 -- ^ Carries the name of primitive type
   deriving (Eq, Generic, Show)
-
 
 instance Monoid Schema where mempty = Empty
 instance Semigroup Schema where
@@ -62,9 +60,20 @@ data Field = Field
   }
   deriving (Eq, Generic, Show)
 
+pattern Empty :: Schema
+pattern Empty <- Record [] where Empty = Record []
+
 pattern Union :: NonEmpty (Text, Schema) -> Schema
 pattern Union alts <- (preview _Union -> Just alts) where
   Union alts = review _Union alts
+
+_Empty :: Prism' Schema ()
+_Empty = prism' build match
+  where
+    build () = Record []
+
+    match (Record []) = Just ()
+    match _ = Nothing
 
 _Union :: Prism' Schema (NonEmpty (Text, Schema))
 _Union = prism' build match

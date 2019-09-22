@@ -3,7 +3,8 @@ module Schemas
  (
   -- * Schemas
     Field(..)
-  , Schema(.., Union)
+  , Schema(.., Empty, Union)
+  , _Empty
   , _Union
   -- ** functions for working with schemas
   , isSubtypeOf

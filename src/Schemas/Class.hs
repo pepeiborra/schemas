@@ -7,7 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Schemas.Class where
 
-import           Control.Lens         hiding (Empty, enum, (<.>))
+import           Control.Lens         hiding (_Empty, Empty, enum, (<.>))
 import           Data.Aeson           (Value)
 import           Data.Biapplicative
 import           Data.Generics.Labels ()
@@ -83,7 +83,7 @@ instance HasSchema Schema where
     , alt "Array"     #_Array
     , alt "Enum"      #_Enum
     , alt "Record"    #_Record
-    , alt "Empty"     #_Empty
+    , alt "Empty"      _Empty
     , alt "AllOf"     #_AllOf
     , alt "Prim"      #_Prim
     , altWith unionSchema "Union" _Union

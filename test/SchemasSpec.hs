@@ -89,7 +89,7 @@ spec = do
         theSchema @Person `shouldBeSubtypeOf`   theSchema @Person2
     describe "Person3" $ do
       it "finiteEncode works as expected" $ shouldLoop $ evaluate $ A.encode
-        (finiteEncode 2 laura3)
+        (finiteEncode 4 laura3)
 
 shouldBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldBeSubtypeOf a b = case isSubtypeOf primValidators a b of
