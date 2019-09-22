@@ -279,14 +279,14 @@ encodeWith sc = either (throw . head) id . runExcept . go sc where
 
 encodeToWith :: TypedSchema a -> Schema -> Maybe (a -> Value)
 encodeToWith sc target = case isSubtypeOf (extractValidators sc) (extractSchema sc) target of
-  Just cast -> Just $ cast . encodeWith sc
-  Nothing   -> Nothing
+  Right cast -> Just $ cast . encodeWith sc
+  _ -> Nothing
 
 -- --------------------------------------------------------------------------
 -- Decoding
 
 data DecodeError
-  = VE ValidationError
+  = VE Mismatch
   | TriedAndFailed
   deriving (Eq, Show)
 
@@ -368,12 +368,12 @@ decodeWith sc = runExcept . go [] sc
     A.Error   e -> failWith ctx (PrimError n (pack e))
     A.Success a -> pure a
   go ctx (TTry sc _try) x = go ctx sc x
-  go ctx _              _ = failWith ctx SchemaMismatch
+  go ctx s              x = failWith ctx (ValueMismatch (extractSchema s) x)
 
 decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either [(Trace, DecodeError)] a)
 decodeFromWith sc source = case isSubtypeOf (extractValidators sc) source (extractSchema sc) of
-  Just cast -> Just $ decodeWith sc . cast
-  Nothing   -> Nothing
+  Right cast -> Just $ decodeWith sc . cast
+  _          -> Nothing
 
 -- ----------------------------------------------
 -- Utils

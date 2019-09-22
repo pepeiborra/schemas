@@ -6,6 +6,7 @@ module SchemasSpec where
 
 import Control.Exception
 import qualified Data.Aeson as A
+import Data.Either
 import Data.Maybe
 import Generators
 import Person
@@ -31,7 +32,7 @@ spec = do
     it "always produces a supertype (in absence of OneOf)" $
       forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       forAll arbitrary $ \(SmallNatural size) ->
-      all (\sc -> isJust $ isSubtypeOf primValidators sc (finite size sc)) (versions sc)
+      all (\sc -> isRight $ isSubtypeOf primValidators sc (finite size sc)) (versions sc)
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
       Record [makeField "a" prim True, makeField "def" prim True]
@@ -93,13 +94,13 @@ spec = do
 
 shouldBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldBeSubtypeOf a b = case isSubtypeOf primValidators a b of
-  Just _ -> pure ()
-  Nothing -> expectationFailure $ show a <> " should be a subtype of " <> show b
+  Right _ -> pure ()
+  _       -> expectationFailure $ show a <> " should be a subtype of " <> show b
 
 shouldNotBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldNotBeSubtypeOf a b = case isSubtypeOf primValidators a b of
-  Just _  -> expectationFailure $ show a <> " should not be a subtype of " <> show b
-  Nothing -> pure ()
+  Right _  -> expectationFailure $ show a <> " should not be a subtype of " <> show b
+  _ -> pure ()
 
 shouldLoop :: (Show a, Eq a) => IO a -> Expectation
 shouldLoop act = timeout 1000000 act `shouldReturn` Nothing

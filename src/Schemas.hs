@@ -7,6 +7,8 @@ module Schemas
   , _Empty
   , _Union
   -- ** functions for working with schemas
+  , Mismatch(..)
+  , Trace
   , isSubtypeOf
   , versions
   , coerce

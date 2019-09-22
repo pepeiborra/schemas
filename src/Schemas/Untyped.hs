@@ -112,7 +112,7 @@ finite = go
 -- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
 finiteValue :: Validators -> Natural -> Schema -> Value -> Value
 finiteValue validators d sc
-  | Just cast <- isSubtypeOf validators sc (finite d sc) = cast
+  | Right cast <- isSubtypeOf validators sc (finite d sc) = cast
   | otherwise = error "bug in isSubtypeOf"
 
 -- ------------------------------------------------------------------------------------------------------
@@ -132,12 +132,13 @@ versions x = [x]
 
 type Trace = [Text]
 
-data ValidationError
+data Mismatch
   = MissingRecordField { name :: Text}
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
   | InvalidConstructor { name :: Text}
-  | InvalidUnionValue { contents :: Value}
-  | SchemaMismatch
+  | InvalidUnionValue  { contents :: Value}
+  | SchemaMismatch     {a, b :: Schema}
+  | ValueMismatch      {expected :: Schema, got :: Value}
   | EmptyAllOf
   | PrimValidatorMissing { name :: Text }
   | PrimError {name, primError :: Text}
@@ -149,12 +150,12 @@ type ValidatePrim = Value -> Maybe Text
 
 -- | Structural validation of a JSON value against a schema
 --   Ignores extraneous fields in records
-validate :: Validators -> Schema -> Value -> [(Trace, ValidationError)]
+validate :: Validators -> Schema -> Value -> [(Trace, Mismatch)]
 validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept (go [] sc v) where
-  failWith :: Trace -> ValidationError -> Except [(Trace, ValidationError)] ()
+  failWith :: Trace -> Mismatch -> Except [(Trace, Mismatch)] ()
   failWith ctx e = throwE [(ctx, e)]
 
-  go :: Trace -> Schema -> Value -> Except [(Trace, ValidationError)] ()
+  go :: Trace -> Schema -> Value -> Except [(Trace, Mismatch)] ()
   go ctx (Prim n) x = case Map.lookup n validators of
     Nothing -> failWith ctx (PrimValidatorMissing n)
     Just v -> case v x of
@@ -184,7 +185,7 @@ validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept
       )
       alts
   go ctx (AllOf scc) v = go ctx (OneOf scc) v
-  go ctx _           _ = failWith ctx (SchemaMismatch)
+  go ctx a           b = failWith ctx (ValueMismatch a b)
 
 -- ------------------------------------------------------------------------------------------------------
 -- Subtype relation
@@ -195,47 +196,51 @@ validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept
 --   Just <function>
 -- > Record [("a", Bool)] `isSubtypeOf` Record [("a", Number)]
 --   Nothing
-isSubtypeOf :: Validators -> Schema -> Schema -> Maybe (Value -> Value)
-isSubtypeOf validators sub sup = go sup sub
+isSubtypeOf :: Validators -> Schema -> Schema -> Either [(Trace, Mismatch)] (Value -> Value)
+isSubtypeOf validators sub sup = runExcept $ go [] sup sub
  where
+  failWith :: Trace -> Mismatch -> Except [(Trace, Mismatch)] a
+  failWith ctx m = throwE [(reverse ctx, m)]
+
         -- TODO go: fix confusing order of arguments
-  go Empty         _         = pure $ const emptyValue
-  go (Array     _) Empty     = pure $ const (A.Array [])
-  go (Record    _) Empty     = pure $ const emptyValue
-  go (StringMap _) Empty     = pure $ const emptyValue
-  go OneOf{}       Empty     = pure $ const emptyValue
-  go (Prim      a) (Prim b ) = guard (a == b) >> pure id
-  go (Array a)     (Array b) = do
-    f <- go a b
+  go :: Trace -> Schema -> Schema -> Except [(Trace,Mismatch)] (Value -> Value)
+  go _tx Empty         _         = pure $ const emptyValue
+  go _tx (Array     _) Empty     = pure $ const (A.Array [])
+  go _tx (Record    _) Empty     = pure $ const emptyValue
+  go _tx (StringMap _) Empty     = pure $ const emptyValue
+  go _tx OneOf{}       Empty     = pure $ const emptyValue
+  go _tx (Prim      a) (Prim b ) = guard (a == b) >> pure id
+  go ctx (Array a)     (Array b) = do
+    f <- go ("[]" : ctx) a b
     pure $ over (_Array . traverse) f
-  go (StringMap a) (StringMap b) = do
-    f <- go a b
+  go ctx (StringMap a) (StringMap b) = do
+    f <- go ("Map" : ctx) a b
     pure $ over (_Object . traverse) f
-  go a (Array b) | a == b = Just (A.Array . fromList . (: []))
-  go (Enum opts) (Enum opts') | all (`elem` opts') opts = Just id
-  go (Union opts) (Union opts') = do
+  go _tx a (Array b) | a == b = pure (A.Array . fromList . (: []))
+  go _tx (Enum opts) (Enum opts') | all (`elem` opts') opts = pure id
+  go ctx (Union opts) (Union opts') = do
     ff <- forM opts' $ \(n, sc) -> do
-      sc' <- lookup n (toList opts)
-      f   <- go sc sc'
+      sc' <- maybe (failWith ctx $ InvalidConstructor n) pure $ lookup n (toList opts)
+      f   <- go (n : ctx) sc sc'
       return $ over (_Object . ix n) f
     return (foldr (.) id ff)
-  go (Record opts) (Record opts') = do
+  go ctx (Record opts) (Record opts') = do
     forM_ (Map.toList opts) $ \(n, f@(Field _ _)) ->
       guard $ not (isRequired f) || Map.member n opts'
     ff <- forM (Map.toList opts') $ \(n', f'@(Field sc' _)) -> do
       case Map.lookup n' opts of
         Nothing -> do
-          Just $ over (_Object) (Map.delete n')
+          pure $ over (_Object) (Map.delete n')
         Just f@(Field sc _) -> do
           guard (not (isRequired f) || isRequired f')
-          witness <- go sc sc'
-          Just $ over (_Object . ix n') witness
+          witness <- go (n' : ctx) sc sc'
+          pure $ over (_Object . ix n') witness
     return (foldr (.) id ff)
-  go (AllOf sup) sub = do
-    (i, c) <- msum $ imap (\i sup' -> (i,) <$> go sup' sub) sup
-    return $ \v -> A.object [("#" <> pack (show i), c v)]
-  go sup (AllOf scc) = asum
-    [ go sup b <&> \f ->
+  go ctx (AllOf sup) sub = do
+    (i, c) <- msum $ imap (\i sup' -> (i,) <$> go ( tag i : ctx) sup' sub) sup
+    return $ \v -> A.object [(tag i, c v)]
+  go ctx sup (AllOf scc) = asum
+    [ go ctx sup b <&> \f ->
         fromMaybe
             (  error
             $  "failed to upcast an AllOf value due to missing entry: "
@@ -245,15 +250,15 @@ isSubtypeOf validators sub sup = go sup sub
     | (i, b) <- zip [(1 :: Int) ..] (NE.toList scc)
     , let field = "#" <> show i
     ]
-  go sup (OneOf [sub]) = go sup sub
-  go sup (OneOf sub  ) = do
-    alts <- traverse (\sc -> (sc, ) <$> go sup sc) sub
+  go ctx sup (OneOf [sub]) = go ctx sup sub
+  go ctx sup (OneOf sub  ) = do
+    alts <- traverse (\sc -> (sc, ) <$> go ctx sup sc) sub
     return $ \v -> head $ mapMaybe
       (\(sc, f) -> if null (validate validators sc v) then Just (f v) else Nothing)
       (toList alts)
-  go (OneOf sup) sub = asum $ fmap (`go` sub) sup
-  go a b | a == b  = pure id
-  go _ _           = Nothing
+  go ctx (OneOf sup) sub = asum $ fmap (\x -> go ctx x sub) sup
+  go _tx a b | a == b  = pure id
+  go ctx a b           = failWith ctx (SchemaMismatch a b)
 
 -- ----------------------------------------------
 -- Utils
@@ -264,6 +269,9 @@ selectPath :: Path -> [a] -> Maybe a
 selectPath 0 (x : _)  = Just x
 selectPath n (_ : xx) = selectPath (pred n) xx
 selectPath _ _        = Nothing
+
+tag :: Int -> Text
+tag i = "#" <> pack (show i)
 
 decodeAlternatives :: Value -> [(Value, Path)]
 decodeAlternatives obj@(A.Object x) =
@@ -276,7 +284,7 @@ decodeAlternatives x = [(x,0)]
 
 encodeAlternatives :: NonEmpty Value -> Value
 encodeAlternatives [x] = x
-encodeAlternatives xx  = A.object $ fromList [ ("#" <> pack (show i), x) | (i,x) <- zip [(1::Int)..] (toList xx) ]
+encodeAlternatives xx  = A.object $ fromList [ (tag i, x) | (i,x) <- zip [(1::Int)..] (toList xx) ]
 
 -- | Generalized lookup for Foldables
 lookup :: (Eq a, Foldable f) => a -> f (a,b) -> Maybe b

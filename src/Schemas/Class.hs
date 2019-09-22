@@ -172,8 +172,8 @@ decodeFrom = decodeFromWith schema
 -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
 coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
 coerce = case isSubtypeOf (validatorsFor @sub) (theSchema @sub) (theSchema @sup) of
-  Just cast -> Just . cast
-  Nothing   -> const Nothing
+  Right cast -> Just . cast
+  _          -> const Nothing
 
 field :: HasSchema a => Text -> (from -> a) -> RecordFields from a
 field = fieldWith schema
