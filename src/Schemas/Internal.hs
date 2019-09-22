@@ -48,12 +48,12 @@ data TypedSchemaFlex from a where
   TEnum   :: (NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlex from a
   TArray :: TypedSchema b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
   TMap   :: TypedSchema b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
-  -- used to support renamings and other structural changes
+  -- | Encoding and decoding support all alternatives
   TAllOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
-  -- used to support unions, etc
+  -- | Decoding from all alternatives, but encoding only to one
   TOneOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
   TEmpty :: a -> TypedSchemaFlex from a
-  TPrim  :: (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
+  TPrim  :: Text -> (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
   -- TTry is used to implement 'optField' on top of 'optFieldWith'
   -- it could be exposed to provide some form of error handling, but currently is not
   TTry   :: TypedSchemaFlex a b -> (a' -> Maybe a) -> TypedSchemaFlex a' b
@@ -74,14 +74,17 @@ list schema = TArray schema (fromList . V.toList) (V.fromList . toList)
 vector :: TypedSchema a -> TypedSchema (Vector a)
 vector sc = TArray sc id id
 
-viaJSON :: (A.FromJSON a, A.ToJSON a) => TypedSchema a
-viaJSON = TPrim A.fromJSON A.toJSON
+viaJSON :: (A.FromJSON a, A.ToJSON a) => Text -> TypedSchema a
+viaJSON n = TPrim n A.fromJSON A.toJSON
 
 viaIso :: Iso' a b -> TypedSchema a -> TypedSchema b
 viaIso iso sc = withIso iso $ \from to -> dimap to from sc
 
+string :: TypedSchema String
+string = viaJSON "String"
+
 readShow :: (Read a, Show a) => TypedSchema a
-readShow = dimap show read viaJSON
+readShow = dimap show read string
 
 instance Functor (TypedSchemaFlex from) where
   fmap = rmap
@@ -94,7 +97,7 @@ instance Profunctor TypedSchemaFlex where
     dimap g f (TEnum     opts      fromf) = TEnum (second f <$> opts) (fromf . g)
     dimap g f (TArray      sc  tof fromf) = TArray sc (f . tof) (fromf . g)
     dimap g f (TMap        sc  tof fromf) = TMap sc (f . tof) (fromf . g)
-    dimap g f (TPrim           tof fromf) = TPrim (fmap f . tof) (fromf . g)
+    dimap g f (TPrim       n   tof fromf) = TPrim n (fmap f . tof) (fromf . g)
     dimap g f (RecordSchema sc) = RecordSchema (dimap g f sc)
 
 instance Monoid a => Monoid (TypedSchemaFlex f a) where
@@ -218,7 +221,7 @@ union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism p sc)
 
 -- | Extract an untyped schema that can be serialized
 extractSchema :: TypedSchemaFlex from a -> Schema
-extractSchema TPrim{}          = Prim
+extractSchema (TPrim n _ _) = Prim n
 extractSchema (TTry sc _)      = extractSchema sc
 extractSchema (TOneOf scc)     = OneOf $ extractSchema <$> scc
 extractSchema (TAllOf scc)     = AllOf $ extractSchema <$> scc
@@ -227,6 +230,25 @@ extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array $ extractSchema sc
 extractSchema (TMap sc _ _)    = StringMap $ extractSchema sc
 extractSchema (RecordSchema rs) = foldMap (Record . fromList) $ extractFields rs
+
+-- | Returns all the primitive validators embedded in this typed schema
+extractValidators :: TypedSchemaFlex from a -> Validators
+extractValidators (TPrim n parse _) =
+  [ ( n
+    , (\x -> case parse x of
+        A.Success _ -> Nothing
+        A.Error   e -> Just (pack e)
+      )
+    )
+  ]
+extractValidators (TOneOf scc) = foldMap extractValidators scc
+extractValidators (TAllOf scc) = foldMap extractValidators scc
+extractValidators (TArray sc _ _) = extractValidators sc
+extractValidators (TMap sc _ _) = extractValidators sc
+extractValidators (TTry sc _) = extractValidators sc
+extractValidators (RecordSchema rs) = mconcat
+  $ mconcat (extractFieldsHelper (extractValidators . fieldTypedSchema) rs)
+extractValidators _ = []
 
 -- ---------------------------------------------------------------------------------------
 -- Encoding to JSON
@@ -240,7 +262,7 @@ encodeWith sc = either (throw . head) id . runExcept . go sc where
   go (TOneOf scc) x = asum (fmap (`go` x) scc)
   go (TTry   sc  try   ) x = go sc =<< maybe (throwE [toException TryFailed]) pure (try x)
   go (TEnum  _   fromf ) b = pure $ A.String (fromf b)
-  go (TPrim  _   fromf ) b = pure $ fromf b
+  go (TPrim  _ _ fromf ) b = pure $ fromf b
   go (TEmpty _         ) _ = pure emptyValue
   go (TArray sc _ fromf) b = A.Array <$> go sc `traverse` fromf b
   go (TMap   sc _ fromf) b = A.Object <$> go sc `traverse` fromf b
@@ -256,7 +278,7 @@ encodeWith sc = either (throw . head) id . runExcept . go sc where
     extractField b OptionalAp {..} = (Just . (fieldName,) <$> go fieldTypedSchema b) `catchE` \_ -> pure Nothing
 
 encodeToWith :: TypedSchema a -> Schema -> Maybe (a -> Value)
-encodeToWith sc target = case extractSchema sc `isSubtypeOf` target of
+encodeToWith sc target = case isSubtypeOf (extractValidators sc) (extractSchema sc) target of
   Just cast -> Just $ cast . encodeWith sc
   Nothing   -> Nothing
 
@@ -275,9 +297,9 @@ runSchema sc = runExcept . go sc
         go :: forall from a. TypedSchemaFlex from a -> from -> Except [DecodeError] a
         go (TEmpty a       ) _    = pure a
         go (TTry sc try) from = maybe (throwE [TriedAndFailed]) (go sc) (try from)
-        go (TPrim toF fromF) from = case toF (fromF from) of
+        go (TPrim n toF fromF) from = case toF (fromF from) of
             A.Success a -> pure a
-            A.Error   e -> failWith (PrimError e)
+            A.Error   e -> failWith (PrimError n (pack e))
         go (TEnum opts fromF) from = case lookup enumValue opts of
             Just x  -> pure x
             Nothing -> failWith $ InvalidEnumValue enumValue (fst <$> opts)
@@ -342,14 +364,14 @@ decodeWith sc = runExcept . go [] sc
     (decodeAlternatives v)
   go ctx (TOneOf scc ) x = asum [ go ctx sc x | sc <- NE.toList scc ]
 
-  go ctx (TPrim tof _) x = case tof x of
-    A.Error   e -> failWith ctx (PrimError e)
+  go ctx (TPrim n tof _) x = case tof x of
+    A.Error   e -> failWith ctx (PrimError n (pack e))
     A.Success a -> pure a
   go ctx (TTry sc _try) x = go ctx sc x
   go ctx _              _ = failWith ctx SchemaMismatch
 
 decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either [(Trace, DecodeError)] a)
-decodeFromWith sc source = case source `isSubtypeOf` extractSchema sc of
+decodeFromWith sc source = case isSubtypeOf (extractValidators sc) source (extractSchema sc) of
   Just cast -> Just $ decodeWith sc . cast
   Nothing   -> Nothing
 

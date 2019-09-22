@@ -34,28 +34,28 @@ instance HasSchema () where
   schema = mempty
 
 instance HasSchema Bool where
-  schema = viaJSON
+  schema = viaJSON "Bool"
 
 instance HasSchema Double where
-  schema = viaJSON
+  schema = viaJSON "Double"
 
 instance HasSchema Scientific where
-  schema = viaJSON
+  schema = viaJSON "Double"
 
 instance HasSchema Int where
-  schema = viaJSON
+  schema = viaJSON "Int"
 
 instance HasSchema Integer where
-  schema = viaJSON
+  schema = viaJSON "Integer"
 
 instance HasSchema Natural where
-  schema = viaJSON
+  schema = viaJSON "Natural"
 
 instance {-# OVERLAPPING #-} HasSchema String where
-  schema = viaJSON
+  schema = string
 
 instance HasSchema Text where
-  schema = viaJSON
+  schema = viaJSON "String"
 
 instance {-# OVERLAPPABLE #-} HasSchema a => HasSchema [a] where
   schema = list schema
@@ -93,7 +93,7 @@ instance HasSchema Schema where
       unionSchema = list (record $ (,) <$> field "constructor" fst <*> field "schema" snd)
 
 instance HasSchema Value where
-  schema = viaJSON
+  schema = viaJSON "JSON"
 
 instance (HasSchema a, HasSchema b) => HasSchema (a,b) where
   schema = record $ (,) <$> field "$1" fst <*> field "$2" snd
@@ -149,6 +149,9 @@ instance Key String where
 theSchema :: forall a . HasSchema a => Schema
 theSchema = extractSchema (schema @a)
 
+validatorsFor :: forall a . HasSchema a => Validators
+validatorsFor = extractValidators (schema @a)
+
 -- | encode using the default schema
 encode :: HasSchema a => a -> Value
 encode = encodeWith schema
@@ -158,7 +161,7 @@ encodeTo = encodeToWith schema
 
 -- | Encode a value into a finite representation by enforcing a max depth
 finiteEncode :: forall a. HasSchema a => Natural -> a -> Value
-finiteEncode d = finiteValue d (theSchema @a) . encode
+finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
 
 decode :: HasSchema a => Value -> Either [(Trace, DecodeError)] a
 decode = decodeWith schema
@@ -168,7 +171,7 @@ decodeFrom = decodeFromWith schema
 
 -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
 coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
-coerce = case isSubtypeOf (theSchema @sub) (theSchema @sup) of
+coerce = case isSubtypeOf (validatorsFor @sub) (theSchema @sub) (theSchema @sup) of
   Just cast -> Just . cast
   Nothing   -> const Nothing
 

@@ -57,7 +57,7 @@ constructorNames :: [Text]
 constructorNames = ["constructor1", "constructor2"]
 
 genSchema ::  Int -> Gen (Schema)
-genSchema 0 = elements [Empty, Prim]
+genSchema 0 = elements [Empty, Prim "A", Prim "B"]
 genSchema n = frequency
   [ (10,) $  Record <$> do
       nfields <- choose (1,2)

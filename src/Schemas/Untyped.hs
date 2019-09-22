@@ -42,10 +42,11 @@ data Schema
   | StringMap Schema
   | Enum   (NonEmpty Text)
   | Record (HashMap Text Field)
-  | AllOf (NonEmpty Schema)  -- ^ encoding and decoding work for all alternatives
-  | OneOf (NonEmpty Schema)  -- ^ Decoding works for all alternatives, encoding only for one
-  | Prim
+  | AllOf (NonEmpty Schema)   -- ^ Encoding and decoding work for all alternatives
+  | OneOf (NonEmpty Schema)   -- ^ Decoding works for all alternatives, encoding only for one
+  | Prim Text                 -- ^ Carries the name of primitive type
   deriving (Eq, Generic, Show)
+
 
 instance Monoid Schema where mempty = Empty
 instance Semigroup Schema where
@@ -59,7 +60,7 @@ data Field = Field
   { fieldSchema :: Schema
   , isRequired  :: Bool -- ^ defaults to True
   }
-  deriving (Generic, Eq, Show)
+  deriving (Eq, Generic, Show)
 
 pattern Union :: NonEmpty (Text, Schema) -> Schema
 pattern Union alts <- (preview _Union -> Just alts) where
@@ -78,7 +79,7 @@ _Union = prism' build match
     viewAlt _                            = Nothing
 
 -- --------------------------------------------------------------------------------
--- Finite schemas
+-- Finite schemes
 
 -- | Ensure that a 'Schema' is finite by enforcing a max depth.
 --   The result is guaranteed to be a supertype of the input.
@@ -100,9 +101,9 @@ finite = go
   go _ other            = other
 
 -- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
-finiteValue :: Natural -> Schema -> Value -> Value
-finiteValue d sc
-  | Just cast <- sc `isSubtypeOf` finite d sc = cast
+finiteValue :: Validators -> Natural -> Schema -> Value -> Value
+finiteValue validators d sc
+  | Just cast <- isSubtypeOf validators sc (finite d sc) = cast
   | otherwise = error "bug in isSubtypeOf"
 
 -- ------------------------------------------------------------------------------------------------------
@@ -129,42 +130,52 @@ data ValidationError
   | InvalidUnionValue { contents :: Value}
   | SchemaMismatch
   | EmptyAllOf
-  | PrimError {viaJSONError :: String}
+  | PrimValidatorMissing { name :: Text }
+  | PrimError {name, primError :: Text}
   | InvalidChoice{choiceNumber :: Int}
   deriving (Eq, Show)
 
+type Validators = HashMap Text ValidatePrim
+type ValidatePrim = Value -> Maybe Text
+
 -- | Structural validation of a JSON value against a schema
 --   Ignores extraneous fields in records
-validate :: Schema -> Value -> [(Trace, ValidationError)]
-validate sc v = either (fmap (first reverse)) (\() -> [])
-  $ runExcept (go [] sc v) where
+validate :: Validators -> Schema -> Value -> [(Trace, ValidationError)]
+validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept (go [] sc v) where
+  failWith :: Trace -> ValidationError -> Except [(Trace, ValidationError)] ()
+  failWith ctx e = throwE [(ctx, e)]
+
   go :: Trace -> Schema -> Value -> Except [(Trace, ValidationError)] ()
-  go _   Prim           _             = pure ()
+  go ctx (Prim n) x = case Map.lookup n validators of
+    Nothing -> failWith ctx (PrimValidatorMissing n)
+    Just v -> case v x of
+      Nothing -> pure ()
+      Just err -> failWith ctx (PrimError n err)
   go ctx (StringMap sc) (A.Object xx) = ifor_ xx $ \i -> go (i : ctx) sc
   go ctx (Array sc) (A.Array xx) =
     ifor_ xx $ \i -> go (pack ("[" <> show i <> "]") : ctx) sc
   go ctx (Enum opts) (A.String s) =
-    if s `elem` opts then pure () else throwE [(ctx, InvalidEnumValue s opts)]
+    if s `elem` opts then pure () else failWith ctx (InvalidEnumValue s opts)
   go ctx (Record ff) (A.Object xx) = ifor_ ff $ \n (Field sc opt) ->
     case (opt, Map.lookup n xx) of
       (_   , Just y ) -> go (n : ctx) sc y
       (True, Nothing) -> pure ()
-      _               -> throwE [(ctx, MissingRecordField n)]
+      _               -> failWith ctx (MissingRecordField n)
   go ctx (Union constructors) v@(A.Object xx) = case toList xx of
     [(n, v)] | Just sc <- lookup n constructors -> go (n : ctx) sc v
-             | otherwise -> throwE [(ctx, InvalidConstructor n)]
+             | otherwise -> failWith ctx (InvalidConstructor n)
     _ -> throwE [(ctx, InvalidUnionValue v)]
   go ctx (OneOf scc) v = case decodeAlternatives v of
     [(v, 0)] -> msum $ fmap (\sc -> go ctx sc v) scc
     alts     -> msum $ fmap
       (\(v, n) ->
-        fromMaybe (throwE [(ctx, InvalidChoice n)]) $ selectPath n $ fmap
+        fromMaybe (failWith ctx (InvalidChoice n)) $ selectPath n $ fmap
           (\sc -> go (pack (show n) : ctx) sc v)
           (toList scc)
       )
       alts
   go ctx (AllOf scc) v = go ctx (OneOf scc) v
-  go ctx _           _ = throwE [(ctx, SchemaMismatch)]
+  go ctx _           _ = failWith ctx (SchemaMismatch)
 
 -- ------------------------------------------------------------------------------------------------------
 -- Subtype relation
@@ -175,8 +186,8 @@ validate sc v = either (fmap (first reverse)) (\() -> [])
 --   Just <function>
 -- > Record [("a", Bool)] `isSubtypeOf` Record [("a", Number)]
 --   Nothing
-isSubtypeOf :: Schema -> Schema -> Maybe (Value -> Value)
-isSubtypeOf sub sup = go sup sub
+isSubtypeOf :: Validators -> Schema -> Schema -> Maybe (Value -> Value)
+isSubtypeOf validators sub sup = go sup sub
  where
         -- TODO go: fix confusing order of arguments
   go Empty         _         = pure $ const emptyValue
@@ -184,6 +195,7 @@ isSubtypeOf sub sup = go sup sub
   go (Record    _) Empty     = pure $ const emptyValue
   go (StringMap _) Empty     = pure $ const emptyValue
   go OneOf{}       Empty     = pure $ const emptyValue
+  go (Prim      a) (Prim b ) = guard (a == b) >> pure id
   go (Array a)     (Array b) = do
     f <- go a b
     pure $ over (_Array . traverse) f
@@ -228,7 +240,7 @@ isSubtypeOf sub sup = go sup sub
   go sup (OneOf sub  ) = do
     alts <- traverse (\sc -> (sc, ) <$> go sup sc) sub
     return $ \v -> head $ mapMaybe
-      (\(sc, f) -> if null (validate sc v) then Just (f v) else Nothing)
+      (\(sc, f) -> if null (validate validators sc v) then Just (f v) else Nothing)
       (toList alts)
   go (OneOf sup) sub = asum $ fmap (`go` sub) sup
   go a b | a == b  = pure id

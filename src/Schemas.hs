@@ -10,6 +10,8 @@ module Schemas
   , versions
   , coerce
   , finite
+  , validate
+  , validatorsFor
   -- * Typed schemas
   , TypedSchema
   , TypedSchemaFlex
