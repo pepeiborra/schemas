@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GADTs                      #-}
@@ -189,15 +190,20 @@ optFieldEitherWith
 optFieldEitherWith schema n e = optFieldGeneral schema n (Left e)
 
 -- | Extract all the field groups (from alternatives) in the record
-extractFields :: RecordFields from a -> [[(Text, Field)]]
+extractFields :: RecordFields from a -> NonDet [(Text, Field)]
 extractFields = extractFieldsHelper extractField
   where
     extractField :: RecordField from a -> (Text, Field)
     extractField (RequiredAp n sc) = (n,) . (`Field` True) $ extractSchema sc
     extractField (OptionalAp n sc _) = (n,) . (`Field` False) $ extractSchema sc
 
-extractFieldsHelper :: (forall a . RecordField from a -> b) -> RecordFields from a -> [[b]]
-extractFieldsHelper f = runAlt_ (\x -> (f x : []) : []) . getRecordFields
+newtype NonDet a = NonDet { nonDet :: [a] }
+  deriving newtype (Applicative, Alternative, Foldable, Functor, Monad)
+
+instance Traversable NonDet where traverse f (NonDet a) = NonDet <$> traverse f a
+
+extractFieldsHelper :: (forall a . RecordField from a -> b) -> RecordFields from a -> NonDet [b]
+extractFieldsHelper f = runAlt_ (\x -> pure [f x]) . getRecordFields
 
 -- --------------------------------------------------------------------------------
 -- Typed Unions
@@ -247,7 +253,7 @@ extractValidators (TArray sc _ _) = extractValidators sc
 extractValidators (TMap sc _ _) = extractValidators sc
 extractValidators (TTry sc _) = extractValidators sc
 extractValidators (RecordSchema rs) = mconcat
-  $ mconcat (extractFieldsHelper (extractValidators . fieldTypedSchema) rs)
+  $ mconcat $ nonDet (extractFieldsHelper (extractValidators . fieldTypedSchema) rs)
 extractValidators _ = []
 
 -- ---------------------------------------------------------------------------------------
@@ -267,12 +273,12 @@ encodeWith sc = either (throw . head) id . runExcept . go sc where
   go (TArray sc _ fromf) b = A.Array <$> go sc `traverse` fromf b
   go (TMap   sc _ fromf) b = A.Object <$> go sc `traverse` fromf b
   go (RecordSchema rec ) x = do
-    fields' <- traverse((`catchE` \_ -> pure Nothing) . fmap Just . sequence) fields
-    case NE.nonEmpty (catMaybes fields') of
-      Nothing -> throwE [] -- NOTE test
-      Just fields' -> pure $ encodeAlternatives $ fmap (A.Object . fromList . catMaybes) fields'
+    let alternatives = extractFieldsHelper (extractField x) rec
+    let results = partitionEithers $ nonDet $ fmap (runExcept . sequenceA) alternatives
+    case results of
+      (_, NE.nonEmpty -> Just fields' )-> pure $ encodeAlternatives $ fmap (A.Object . fromList . catMaybes) fields'
+      (ee, _) -> throwE (concat ee)
    where
-    fields = extractFieldsHelper (extractField x) rec
 
     extractField b RequiredAp {..} =  Just . (fieldName,) <$> go fieldTypedSchema b
     extractField b OptionalAp {..} = (Just . (fieldName,) <$> go fieldTypedSchema b) `catchE` \_ -> pure Nothing
