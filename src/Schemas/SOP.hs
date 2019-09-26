@@ -63,7 +63,7 @@ gSchemaNS opts =
             -> K (Text, TypedSchema (NS (NP I) xss)) xs
         mk (Fn inject) (Fn eject) ci = K
             ( cons
-            , dimap (unComp . eject . K) (unK . inject . fromJust) (liftMaybe $ gSchemaNP opts ci)
+            , dimap (unComp . eject . K) (unK . inject . fromJust) (liftJust $ gSchemaNP opts ci)
             )
             where cons = pack (constructorTagModifier opts (constructorName ci))
 

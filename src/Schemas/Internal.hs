@@ -32,7 +32,6 @@ import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
 import           Data.Text                  (Text, pack)
 import           Data.Tuple
-import           Data.Typeable              (Typeable)
 import           Data.Vector                (Vector)
 import qualified Data.Vector                as V
 import           GHC.Exts                   (IsList (..))
@@ -55,9 +54,9 @@ data TypedSchemaFlex from a where
   TOneOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
   TEmpty :: a -> TypedSchemaFlex from a
   TPrim  :: Text -> (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
-  -- TTry is used to implement 'optField' on top of 'optFieldWith'
+  -- TTry _ is used to implement 'optField' on top of 'optFieldWith'
   -- it could be exposed to provide some form of error handling, but currently is not
-  TTry   :: TypedSchemaFlex a b -> (a' -> Maybe a) -> TypedSchemaFlex a' b
+  TTry     :: Text -> TypedSchemaFlex a b -> (a' -> Maybe a) -> TypedSchemaFlex a' b
   RecordSchema :: RecordFields from a -> TypedSchemaFlex from a
 
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
@@ -92,7 +91,7 @@ instance Functor (TypedSchemaFlex from) where
 
 instance Profunctor TypedSchemaFlex where
     dimap _ f (TEmpty a                 ) = TEmpty (f a)
-    dimap g f (TTry        sc        try) = TTry (rmap f sc) (try . g)
+    dimap g f (TTry n       sc       try) = TTry n (rmap f sc) (try . g)
     dimap g f (TAllOf      scc          ) = TAllOf (dimap g f <$> scc)
     dimap g f (TOneOf      scc          ) = TOneOf (dimap g f <$> scc)
     dimap g f (TEnum     opts      fromf) = TEnum (second f <$> opts) (fromf . g)
@@ -153,20 +152,17 @@ fieldWith schema n get = fieldWith' (lmap get schema) n
 fieldWith' :: TypedSchemaFlex from a -> Text -> RecordFields from a
 fieldWith' schema n = RecordFields $ liftAlt (RequiredAp n schema)
 
-data TryFailed = TryFailed
- deriving (Exception, Show, Typeable)
-
 -- | Project a schema through a Prism. The resulting schema is empty if the Prism doesn't fit
-liftPrism :: Prism s t a b -> TypedSchemaFlex a b -> TypedSchemaFlex s t
-liftPrism p sc = withPrism p $ \t f -> rmap t (TTry sc (either (const Nothing) Just . f))
+liftPrism :: Text -> Prism s t a b -> TypedSchemaFlex a b -> TypedSchemaFlex s t
+liftPrism n p sc = withPrism p $ \t f -> rmap t (TTry n sc (either (const Nothing) Just . f))
 
 -- | Use this to build schemas for 'optFieldWith'. The resulting schema is empty for the Nothing case
-liftMaybe :: TypedSchemaFlex a b -> TypedSchemaFlex (Maybe a) (Maybe b)
-liftMaybe = liftPrism _Just
+liftJust :: TypedSchemaFlex a b -> TypedSchemaFlex (Maybe a) (Maybe b)
+liftJust = liftPrism "Just" _Just
 
 -- | Use this to build schemas for 'optFieldEitherWith'. The resulting schema is empty for the Left case
-liftEither :: TypedSchemaFlex a b -> TypedSchemaFlex (Either c a) (Either c b)
-liftEither = liftPrism _Right
+liftRight :: TypedSchemaFlex a b -> TypedSchemaFlex (Either c a) (Either c b)
+liftRight = liftPrism "Right" _Right
 
 -- | A generalized version of 'optField'. Does not handle infinite/circular data.
 optFieldWith
@@ -220,7 +216,7 @@ altWith :: TypedSchema a -> Text -> Prism' from a -> UnionTag from
 altWith sc n p = UnionTag n p sc
 
 union' :: (NonEmpty (UnionTag from)) -> TypedSchema from
-union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism p sc)
+union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism c p sc)
 
 -- --------------------------------------------------------------------------------
 -- Schema extraction from a TypedSchema
@@ -228,7 +224,7 @@ union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism p sc)
 -- | Extract an untyped schema that can be serialized
 extractSchema :: TypedSchemaFlex from a -> Schema
 extractSchema (TPrim n _ _) = Prim n
-extractSchema (TTry sc _)      = extractSchema sc
+extractSchema (TTry _ sc _)      = extractSchema sc
 extractSchema (TOneOf scc)     = OneOf $ extractSchema <$> scc
 extractSchema (TAllOf scc)     = AllOf $ extractSchema <$> scc
 extractSchema TEmpty{}         = Empty
@@ -251,7 +247,7 @@ extractValidators (TOneOf scc) = foldMap extractValidators scc
 extractValidators (TAllOf scc) = foldMap extractValidators scc
 extractValidators (TArray sc _ _) = extractValidators sc
 extractValidators (TMap sc _ _) = extractValidators sc
-extractValidators (TTry sc _) = extractValidators sc
+extractValidators (TTry _ sc _) = extractValidators sc
 extractValidators (RecordSchema rs) = mconcat
   $ mconcat $ nonDet (extractFieldsHelper (extractValidators . fieldTypedSchema) rs)
 extractValidators _ = []
@@ -262,26 +258,33 @@ extractValidators _ = []
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
   -- TODO Better error messages to help debug partial schemas ?
-encodeWith sc = either (throw . head) id . runExcept . go sc where
-  go :: TypedSchemaFlex from a -> from -> Except [SomeException] Value
-  go (TAllOf scc) x = encodeAlternatives <$> traverse (`go` x) scc
-  go (TOneOf scc) x = asum (fmap (`go` x) scc)
-  go (TTry   sc  try   ) x = go sc =<< maybe (throwE [toException TryFailed]) pure (try x)
-  go (TEnum  _   fromf ) b = pure $ A.String (fromf b)
-  go (TPrim  _ _ fromf ) b = pure $ fromf b
+encodeWith sc = either (throw . AllAlternativesFailed) id . runExcept . go sc where
+  go :: TypedSchemaFlex from a -> from -> Except [Mismatch] Value
+  go (TAllOf scc       ) x = encodeAlternatives <$> traverse (`go` x) scc
+  go (TOneOf scc       ) x = asum (fmap (`go` x) scc)
+  go (TTry n sc try    ) x = go sc =<< maybe (throwE [TryFailed n]) pure (try x)
+  go (TEnum _ fromf    ) b = pure $ A.String (fromf b)
+  go (TPrim _ _ fromf  ) b = pure $ fromf b
   go (TEmpty _         ) _ = pure emptyValue
   go (TArray sc _ fromf) b = A.Array <$> go sc `traverse` fromf b
   go (TMap   sc _ fromf) b = A.Object <$> go sc `traverse` fromf b
   go (RecordSchema rec ) x = do
     let alternatives = extractFieldsHelper (extractField x) rec
-    let results = partitionEithers $ nonDet $ fmap (runExcept . sequenceA) alternatives
+    let results =
+          partitionEithers $ nonDet $ fmap (runExcept . sequenceA) alternatives
     case results of
-      (_, NE.nonEmpty -> Just fields' )-> pure $ encodeAlternatives $ fmap (A.Object . fromList . catMaybes) fields'
+      (_, NE.nonEmpty -> Just fields') -> pure $ encodeAlternatives $ fmap
+        (A.Object . fromList . catMaybes)
+        fields'
       (ee, _) -> throwE (concat ee)
    where
 
-    extractField b RequiredAp {..} =  Just . (fieldName,) <$> go fieldTypedSchema b
-    extractField b OptionalAp {..} = (Just . (fieldName,) <$> go fieldTypedSchema b) `catchE` \_ -> pure Nothing
+    extractField b RequiredAp {..} =
+      Just . (fieldName, ) <$> go fieldTypedSchema b `catchE` \mm ->
+        throwE [InvalidRecordField fieldName mm]
+    extractField b OptionalAp {..} =
+      (Just . (fieldName, ) <$> go fieldTypedSchema b)
+        `catchE` \_ -> pure Nothing
 
 encodeToWith :: TypedSchema a -> Schema -> Maybe (a -> Value)
 encodeToWith sc target = case isSubtypeOf (extractValidators sc) (extractSchema sc) target of
@@ -302,7 +305,7 @@ runSchema sc = runExcept . go sc
     where
         go :: forall from a. TypedSchemaFlex from a -> from -> Except [DecodeError] a
         go (TEmpty a       ) _    = pure a
-        go (TTry sc try) from = maybe (throwE [TriedAndFailed]) (go sc) (try from)
+        go (TTry _ sc try) from = maybe (throwE [TriedAndFailed]) (go sc) (try from)
         go (TPrim n toF fromF) from = case toF (fromF from) of
             A.Success a -> pure a
             A.Error   e -> failWith (PrimError n (pack e))
@@ -325,7 +328,7 @@ runSchema sc = runExcept . go sc
 -- | Given a JSON 'Value' and a typed schema, extract a Haskell value
 decodeWith :: TypedSchemaFlex from a -> Value -> Either [(Trace, DecodeError)] a
 -- TODO merge runSchema and decodeWith ?
--- TODO change decode type to reflect partiality due to TTry?
+-- TODO change decode type to reflect partiality due to TTry _?
 decodeWith sc = runExcept . go [] sc
  where
   failWith ctx e = throwE [(reverse ctx, VE e)]
@@ -373,7 +376,7 @@ decodeWith sc = runExcept . go [] sc
   go ctx (TPrim n tof _) x = case tof x of
     A.Error   e -> failWith ctx (PrimError n (pack e))
     A.Success a -> pure a
-  go ctx (TTry sc _try) x = go ctx sc x
+  go ctx (TTry _ sc _try) x = go ctx sc x
   go ctx s              x = failWith ctx (ValueMismatch (extractSchema s) x)
 
 decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either [(Trace, DecodeError)] a)

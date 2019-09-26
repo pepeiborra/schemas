@@ -179,7 +179,7 @@ field :: HasSchema a => Text -> (from -> a) -> RecordFields from a
 field = fieldWith schema
 
 optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
-optField n get = optFieldWith (lmap get $ liftMaybe (schema @a)) n
+optField n get = optFieldWith (lmap get $ liftJust (schema @a)) n
 
 optFieldEither
     :: forall a from e
@@ -188,7 +188,7 @@ optFieldEither
     -> (from -> Either e a)
     -> e
     -> RecordFields from (Either e a)
-optFieldEither n x e = optFieldGeneral (lmap x $ liftEither schema) n (Left e)
+optFieldEither n x e = optFieldGeneral (lmap x $ liftRight schema) n (Left e)
 
 alt :: HasSchema a => Text -> Prism' from a -> UnionTag from
 alt = altWith schema

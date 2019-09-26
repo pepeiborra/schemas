@@ -10,6 +10,7 @@
 
 module Schemas.Untyped where
 
+import           Control.Exception
 import           Control.Lens               hiding (Empty, enum, (<.>))
 import           Control.Monad
 import           Control.Monad.Trans.Except
@@ -27,6 +28,7 @@ import           Data.List.NonEmpty         (NonEmpty (..))
 import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
 import           Data.Text                  (Text, pack, unpack)
+import           Data.Typeable
 import           GHC.Exts                   (IsList (..))
 import           GHC.Generics               (Generic)
 import           Numeric.Natural
@@ -134,6 +136,7 @@ type Trace = [Text]
 
 data Mismatch
   = MissingRecordField { name :: Text}
+  | InvalidRecordField { name :: Text, mismatches :: [Mismatch] }
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
   | InvalidConstructor { name :: Text}
   | InvalidUnionValue  { contents :: Value}
@@ -143,7 +146,11 @@ data Mismatch
   | PrimValidatorMissing { name :: Text }
   | PrimError {name, primError :: Text}
   | InvalidChoice{choiceNumber :: Int}
-  deriving (Eq, Show)
+  | TryFailed { name :: Text }
+  | AllAlternativesFailed { mismatches :: [Mismatch]}
+  deriving (Eq, Show, Typeable)
+
+instance Exception Mismatch
 
 type Validators = HashMap Text ValidatePrim
 type ValidatePrim = Value -> Maybe Text

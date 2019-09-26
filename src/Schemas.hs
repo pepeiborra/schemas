@@ -46,8 +46,8 @@ module Schemas
   , fieldNameL
   , overFieldNames
   , extractFields
-  , liftMaybe
-  , liftEither
+  , liftJust
+  , liftRight
   -- *** Unions
   , union
   , union'
