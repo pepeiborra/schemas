@@ -135,7 +135,8 @@ versions x = [x]
 type Trace = [Text]
 
 data Mismatch
-  = MissingRecordField { name :: Text}
+  = MissingRecordField { name :: Text }
+  | OptionalRecordField { name :: Text }
   | InvalidRecordField { name :: Text, mismatches :: [Mismatch] }
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
   | InvalidConstructor { name :: Text}
@@ -216,7 +217,9 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
   go _tx (Record    _) Empty     = pure $ const emptyValue
   go _tx (StringMap _) Empty     = pure $ const emptyValue
   go _tx OneOf{}       Empty     = pure $ const emptyValue
-  go _tx (Prim      a) (Prim b ) = guard (a == b) >> pure id
+  go ctx (Prim      a) (Prim b ) = do
+    unless (a == b) $ failWith ctx (PrimError a b)
+    pure id
   go ctx (Array a)     (Array b) = do
     f <- go ("[]" : ctx) a b
     pure $ over (_Array . traverse) f
@@ -232,14 +235,16 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
       return $ over (_Object . ix n) f
     return (foldr (.) id ff)
   go ctx (Record opts) (Record opts') = do
-    forM_ (Map.toList opts) $ \(n, f@(Field _ _)) ->
-      guard $ not (isRequired f) || Map.member n opts'
+    forM_ (Map.toList opts) $ \(n, f) ->
+      unless (not (isRequired f) || Map.member n opts') $
+        failWith ctx $ MissingRecordField n
     ff <- forM (Map.toList opts') $ \(n', f'@(Field sc' _)) -> do
       case Map.lookup n' opts of
         Nothing -> do
           pure $ over (_Object) (Map.delete n')
         Just f@(Field sc _) -> do
-          guard (not (isRequired f) || isRequired f')
+          unless (not (isRequired f) || isRequired f') $
+            failWith ctx $ OptionalRecordField n'
           witness <- go (n' : ctx) sc sc'
           pure $ over (_Object . ix n') witness
     return (foldr (.) id ff)
