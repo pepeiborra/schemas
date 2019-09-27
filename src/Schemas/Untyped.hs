@@ -136,6 +136,7 @@ type Trace = [Text]
 
 data Mismatch
   = MissingRecordField { name :: Text }
+  | MissingEnumChoices { choices :: NonEmpty Text }
   | OptionalRecordField { name :: Text }
   | InvalidRecordField { name :: Text, mismatches :: [Mismatch] }
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
@@ -227,7 +228,10 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
     f <- go ("Map" : ctx) a b
     pure $ over (_Object . traverse) f
   go _tx a (Array b) | a == b = pure (A.Array . fromList . (: []))
-  go _tx (Enum opts) (Enum opts') | all (`elem` opts') opts = pure id
+  go ctx (Enum opts) (Enum opts') =
+    case NE.nonEmpty $ NE.filter (`notElem` opts) opts' of
+      Nothing -> pure id
+      Just xx -> failWith ctx $ MissingEnumChoices xx
   go ctx (Union opts) (Union opts') = do
     ff <- forM opts' $ \(n, sc) -> do
       sc' <- maybe (failWith ctx $ InvalidConstructor n) pure $ lookup n (toList opts)

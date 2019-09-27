@@ -54,10 +54,10 @@ spec = do
     it "subtypes can remove Optional fields" $ do
       Record [makeField "def" prim True] `shouldBeSubtypeOf` Record
         [makeField "def" prim True, makeField "a" prim (False)]
-    it "subtypes can add enum choices" $ do
-      Enum ["A", "def"] `shouldBeSubtypeOf` Enum ["def"]
-    it "subtypes cannot remove enum choices" $ do
-      Enum ["def"] `shouldNotBeSubtypeOf` Enum ["A"]
+    it "subtypes can remove enum choices" $ do
+      Enum ["def"] `shouldBeSubtypeOf` Enum ["A", "def"]
+    it "subtypes cannot add enum choices" $ do
+      Enum ["A", "def"] `shouldNotBeSubtypeOf` Enum ["def"]
     it "subtypes can remove constructors" $ do
       Union [constructor' "B" Empty]
         `shouldBeSubtypeOf` Union [constructor' "A" Empty, constructor' "B" Empty]
