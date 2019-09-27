@@ -86,6 +86,9 @@ string = viaJSON "String"
 readShow :: (Read a, Show a) => TypedSchema a
 readShow = dimap show read string
 
+oneOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
+oneOf = TOneOf
+
 instance Functor (TypedSchemaFlex from) where
   fmap = rmap
 

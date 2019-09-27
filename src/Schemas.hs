@@ -26,10 +26,11 @@ module Schemas
   , readShow
   , list
   , vector
+  , Key(..)
   , stringMap
   , viaJSON
   , viaIso
-  , Key(..)
+  , oneOf
   -- *** Applicative record definition
   , record
   , RecordField
@@ -48,6 +49,7 @@ module Schemas
   , extractFields
   , liftJust
   , liftRight
+  , liftPrism
   -- *** Unions
   , union
   , union'
