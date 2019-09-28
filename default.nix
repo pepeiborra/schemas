@@ -1,6 +1,13 @@
-{ nixpkgs ? import <nixpkgs> {}, compiler ? "default", withHoogle ? true}:
+{ compiler ? "default", withHoogle ? true}:
 
 let
+  nixpkgs = import (builtins.fetchGit {
+  # Descriptive name to make the store path easier to identify
+  name = "nixos-unstable-2019-09-27";
+  url = https://github.com/nixos/nixpkgs/;
+  rev = "15f9bdb6489e7e55a861958a9388bf5ad3b2d2cd";
+}) {};
+
   inherit (nixpkgs) pkgs;
   packageSet = (
     if compiler == "default"
