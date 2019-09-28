@@ -1,3 +1,5 @@
+[![CI](https://travis-ci.com/pepeiborra/schemas.svg)](https://travis-ci.org/pepeiborra/threepenny-editors)
+[![Hackage](https://img.shields.io/hackage/v/schemas.svg)](https://hackage.haskell.org/package/threepenny-editors)
 # schemas
 A library for schema-guided serialization of Haskell data types. 
 
