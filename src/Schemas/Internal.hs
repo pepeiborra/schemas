@@ -15,7 +15,7 @@ module Schemas.Internal where
 import           Control.Alternative.Free
 import           Control.Applicative        (Alternative (..))
 import           Control.Exception
-import           Control.Lens               hiding (Empty, enum, (<.>))
+import           Control.Lens               hiding (Empty, enum, (<.>), allOf)
 import           Control.Monad
 import           Control.Monad.Trans.Except
 import           Data.Aeson                 (Value)
@@ -30,6 +30,7 @@ import qualified Data.HashMap.Strict        as Map
 import           Data.List.NonEmpty         (NonEmpty (..))
 import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
+import           Data.Semigroup
 import           Data.Text                  (Text, pack)
 import           Data.Tuple
 import           Data.Vector                (Vector)
@@ -86,8 +87,17 @@ string = viaJSON "String"
 readShow :: (Read a, Show a) => TypedSchema a
 readShow = dimap show read string
 
+allOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
+allOf [x] = x
+allOf x = TAllOf $ sconcat $ fmap f x where
+  f (TAllOf xx) = xx
+  f x = [x]
+
 oneOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
-oneOf = TOneOf
+oneOf [x] = x
+oneOf x = TOneOf $ sconcat $ fmap f x where
+  f (TOneOf xx) = xx
+  f x = [x]
 
 instance Functor (TypedSchemaFlex from) where
   fmap = rmap
@@ -110,9 +120,9 @@ instance Semigroup a => Semigroup (TypedSchemaFlex f a) where
   TEmpty a <> TEmpty b = TEmpty (a <> b)
   TEmpty{} <> x = x
   x <> TEmpty{} = x
-  TAllOf aa <> b = TAllOf (aa <> [b])
-  a <> TAllOf bb = TAllOf ([a] <> bb)
-  a <> b = TAllOf [a,b]
+  TAllOf aa <> b = allOf (aa <> [b])
+  a <> TAllOf bb = allOf ([a] <> bb)
+  a <> b = allOf [a,b]
 
 type TypedSchema a = TypedSchemaFlex a a
 
