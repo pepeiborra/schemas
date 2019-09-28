@@ -45,6 +45,7 @@ library
     Schemas
     Schemas.Class
     Schemas.Internal
+    Schemas.OpenApi2
     Schemas.SOP
     Schemas.Untyped
   -- other-modules:
@@ -81,6 +82,7 @@ test-suite spec
                      , Person2
                      , Person3
                      , SchemasSpec
+                     , Schemas.OpenApi2Spec
                      , Generators
   build-depends:       aeson
                      , aeson-pretty
@@ -94,3 +96,4 @@ test-suite spec
                      , QuickCheck
                      , schemas
                      , text
+                     , unordered-containers

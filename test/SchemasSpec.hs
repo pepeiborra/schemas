@@ -19,6 +19,9 @@ import Test.Hspec.QuickCheck
 import Test.QuickCheck
 import Text.Show.Functions ()
 
+main :: IO ()
+main = hspec spec
+
 spec :: Spec
 spec = do
   describe "encoding" $ do

@@ -34,22 +34,22 @@ instance HasSchema () where
   schema = mempty
 
 instance HasSchema Bool where
-  schema = viaJSON "Bool"
+  schema = viaJSON "Boolean"
 
 instance HasSchema Double where
-  schema = viaJSON "Double"
+  schema = viaJSON "Number"
 
 instance HasSchema Scientific where
-  schema = viaJSON "Double"
+  schema = viaJSON "Number"
 
 instance HasSchema Int where
-  schema = viaJSON "Int"
+  schema = viaJSON "Integer"
 
 instance HasSchema Integer where
   schema = viaJSON "Integer"
 
 instance HasSchema Natural where
-  schema = viaJSON "Natural"
+  schema = viaJSON "Integer"
 
 instance {-# OVERLAPPING #-} HasSchema String where
   schema = string

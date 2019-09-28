@@ -45,6 +45,7 @@ module Schemas
   , enum
   , readShow
   , list
+  , string
   , vector
   , Key(..)
   , stringMap
