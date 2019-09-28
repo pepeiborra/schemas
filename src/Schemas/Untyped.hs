@@ -20,7 +20,6 @@ import           Data.Aeson.Lens
 import           Data.Biapplicative
 import           Data.Either
 import           Data.Foldable              (asum)
-import           Data.Generics.Labels       ()
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as Map
 import           Data.List                  (find)
@@ -66,6 +65,9 @@ data Field = Field
   , isRequired  :: Bool -- ^ defaults to True
   }
   deriving (Eq, Generic, Show)
+
+fieldSchemaL :: Applicative f => (Schema -> f Schema) -> Field -> f Field
+fieldSchemaL f Field{..} = Field <$> f fieldSchema <*> pure isRequired
 
 pattern Empty :: Schema
 pattern Empty <- Record [] where Empty = Record []
@@ -129,7 +131,7 @@ finiteValue validators d sc
 versions :: Schema -> NonEmpty Schema
 versions (AllOf scc) = join $ traverse versions scc
 versions (OneOf scc) = OneOf <$> traverse versions scc
-versions (Record fields) = Record <$> ((traverse . #fieldSchema) versions fields)
+versions (Record fields) = Record <$> ((traverse . fieldSchemaL) versions fields)
 versions (Array sc) = Array <$> versions sc
 versions (StringMap sc) = StringMap <$> versions sc
 versions x = [x]

@@ -27,7 +27,6 @@ import           Control.Monad.Trans.Except
 import           Control.Monad.Trans.Writer
 import           Data.Aeson                 (Value)
 import           Data.Functor
-import           Data.Generics.Labels       ()
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as Map
 import qualified Data.List.NonEmpty         as NE

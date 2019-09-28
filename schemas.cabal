@@ -52,16 +52,13 @@ library
   -- other-extensions:
   build-depends:       base ^>=4.12.0.0
                      , aeson
-                     , aeson-pretty
                      , bifunctors
                      , bytestring
                      , free
-                     , generic-lens
                      , generics-sop >= 0.5.0.0
                      , hashable
                      , lens
                      , lens-aeson
-                     , pretty-simple
                      , profunctors
                      , scientific
                      , text

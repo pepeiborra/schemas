@@ -24,7 +24,6 @@ import           Data.Biapplicative
 import           Data.Either
 import           Data.Foldable              (asum)
 import           Data.Functor.Compose
-import           Data.Generics.Labels       ()
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as Map
 import           Data.List.NonEmpty         (NonEmpty (..))

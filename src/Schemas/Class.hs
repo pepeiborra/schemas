@@ -10,7 +10,6 @@ module Schemas.Class where
 import           Control.Lens         hiding (_Empty, Empty, enum, (<.>))
 import           Data.Aeson           (Value)
 import           Data.Biapplicative
-import           Data.Generics.Labels ()
 import           Data.Hashable
 import           Data.HashMap.Strict  (HashMap)
 import qualified Data.HashMap.Strict  as Map
@@ -79,15 +78,15 @@ instance HasSchema a => HasSchema (Identity a) where
 
 instance HasSchema Schema where
   schema = union'
-    [ alt "StringMap" #_StringMap
-    , alt "Array"     #_Array
-    , alt "Enum"      #_Enum
-    , alt "Record"    #_Record
+    [ alt "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
+    , alt "Array"     $ prism' Array (\case Array x -> Just x ; _ -> Nothing)
+    , alt "Enum"      $ prism' Enum (\case Enum x -> Just x ; _ -> Nothing)
+    , alt "Record"    $ prism' Record (\case Record x -> Just x ; _ -> Nothing)
     , alt "Empty"      _Empty
-    , alt "AllOf"     #_AllOf
-    , alt "Prim"      #_Prim
+    , alt "AllOf"     $ prism' AllOf (\case AllOf x -> Just x ; _ -> Nothing)
+    , alt "Prim"      $ prism' Prim (\case Prim x -> Just x ; _ -> Nothing)
     , altWith unionSchema "Union" _Union
-    , alt "OneOf"     #_OneOf
+    , alt "OneOf"     $ prism' OneOf (\case OneOf x -> Just x ; _ -> Nothing)
     ]
     where
       unionSchema = list (record $ (,) <$> field "constructor" fst <*> field "schema" snd)
@@ -121,7 +120,7 @@ instance (HasSchema a, HasSchema b, HasSchema c, HasSchema d, HasSchema e) => Ha
       <*> field "$5" (view _5)
 
 instance (HasSchema a, HasSchema b) => HasSchema (Either a b) where
-  schema = union' [alt "Left" #_Left, alt "Right" #_Right]
+  schema = union' [alt "Left" _Left, alt "Right" _Right]
 
 instance (Eq key, Hashable key, HasSchema a, Key key) => HasSchema (HashMap key a) where
   schema = dimap toKeyed fromKeyed $ stringMap schema
