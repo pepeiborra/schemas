@@ -44,7 +44,12 @@ import           Schemas.Untyped
 
 -- | @TypedSchemaFlex enc dec@ is a schema for encoding to @enc@ and decoding to @dec@.
 --   Usually we want @enc@ and @dec@ to be the same type but this flexibility comes in handy
---   when composing typed schemas.
+--   for composition.
+--
+--   * introduction forms: 'record', 'enum', 'schema'
+--   * operations: 'encodeTo', 'decodeFrom', 'extractSchema'
+--   * composition: 'dimap', 'union', 'stringMap', 'liftPrism'
+--
 data TypedSchemaFlex from a where
   TEnum   :: (NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlex from a
   TArray :: TypedSchema b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
@@ -60,30 +65,41 @@ data TypedSchemaFlex from a where
   TTry     :: Text -> TypedSchemaFlex a b -> (a' -> Maybe a) -> TypedSchemaFlex a' b
   RecordSchema :: RecordFields from a -> TypedSchemaFlex from a
 
+-- | @enum values mapping@ construct a schema for a non empty set of values with a 'Text' mapping
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
 enum showF opts = TEnum alts (fromMaybe (error "invalid alt") . flip lookup altMap)
  where
   altMap = fmap swap $ alts --TODO fast lookup
   alts   = opts <&> \x -> (showF x, x)
 
+-- | @stringMap sc@ is the schema for a stringmap where the values have schema @sc@
 stringMap :: TypedSchema a -> TypedSchema (HashMap Text a)
 stringMap sc = TMap sc id id
 
+-- | @list sc@ is the schema for a list of values with schema @sc@
 list :: IsList l => TypedSchema (Item l) -> TypedSchema l
 list schema = TArray schema (fromList . V.toList) (V.fromList . toList)
 
+-- | @vector sc@ is the schema for a vector of values with schema @sc@
 vector :: TypedSchema a -> TypedSchema (Vector a)
 vector sc = TArray sc id id
 
+-- | @viaJson label@ constructs a schema reusing existing 'aeson' instances. The resulting schema
+--  is opaque and cannot be subtyped and/or versioned, so this constructor should be used sparingly.
+--  The @label@ is used to describe the extracted 'Schema'.
 viaJSON :: (A.FromJSON a, A.ToJSON a) => Text -> TypedSchema a
 viaJSON n = TPrim n A.fromJSON A.toJSON
 
+-- | Apply an isomorphism to a schema
 viaIso :: Iso' a b -> TypedSchema a -> TypedSchema b
 viaIso iso sc = withIso iso $ \from to -> dimap to from sc
 
+-- | The schema of String values
 string :: TypedSchema String
 string = viaJSON "String"
 
+-- | A schema for types that can be parsed and pretty-printed. The resulting schema is opaque and cannot
+-- be subtyped/versioned, so this constructor is best used for primitive value
 readShow :: (Read a, Show a) => TypedSchema a
 readShow = dimap show read string
 
@@ -93,6 +109,7 @@ allOf x = TAllOf $ sconcat $ fmap f x where
   f (TAllOf xx) = xx
   f x = [x]
 
+-- | The schema of undiscriminated unions. Prefer using 'union' where possible
 oneOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
 oneOf [x] = x
 oneOf x = TOneOf $ sconcat $ fmap f x where
@@ -117,6 +134,7 @@ instance Monoid a => Monoid (TypedSchemaFlex f a) where
   mempty = TEmpty mempty
 
 instance Semigroup a => Semigroup (TypedSchemaFlex f a) where
+  -- | Allows defining multiple schemas for the same thing, effectively implementing versioning.
   TEmpty a <> TEmpty b = TEmpty (a <> b)
   TEmpty{} <> x = x
   x <> TEmpty{} = x
@@ -130,7 +148,7 @@ type TypedSchema a = TypedSchemaFlex a a
 -- Applicative records
 
 data RecordField from a where
-  RequiredAp :: { fieldName :: Text
+  RequiredAp :: { fieldName :: Text  -- ^ Name of the field
                 , fieldTypedSchema :: TypedSchemaFlex from a
                 } -> RecordField from a
   OptionalAp :: { fieldName :: Text
@@ -138,6 +156,7 @@ data RecordField from a where
                 , fieldDefValue :: a
                 } -> RecordField from a
 
+-- | Lens for the 'fieldName' attribute
 fieldNameL :: Lens' (RecordField from a) Text
 fieldNameL f (RequiredAp n sc) = (`RequiredAp` sc) <$> f n
 fieldNameL f OptionalAp{..} = (\fieldName -> OptionalAp{..}) <$> f fieldName
@@ -146,34 +165,47 @@ instance Profunctor RecordField where
   dimap f g (RequiredAp name sc)     = RequiredAp name (dimap f g sc)
   dimap f g (OptionalAp name sc def) = OptionalAp name (dimap f g sc) (g def)
 
+-- | An 'Alternative' profunctor for defining record schemas with versioning
+--
+-- @
+--  schemaPerson = Person
+--             <$> (field "name" name <|> field "full name" name)
+--             <*> (field "age" age <|> pure -1)
+-- @
 newtype RecordFields from a = RecordFields {getRecordFields :: Alt (RecordField from) a}
   deriving newtype (Alternative, Applicative, Functor, Monoid, Semigroup)
 
 instance Profunctor RecordFields where
   dimap f g = RecordFields . hoistAlt (lmap f) . fmap g . getRecordFields
 
+-- | Map a function over all the field names
 overFieldNames :: (Text -> Text) -> RecordFields from a -> RecordFields from a
 overFieldNames f = RecordFields . hoistAlt ((over fieldNameL f)) . getRecordFields
 
--- | Define a record schema using applicative syntax
+-- | Wrap an applicative record schema
 record :: RecordFields from a -> TypedSchemaFlex from a
 record = RecordSchema
 
+-- | @fieldWith sc n get@ introduces a field
 fieldWith :: TypedSchema a -> Text -> (from -> a) -> RecordFields from a
 fieldWith schema n get = fieldWith' (lmap get schema) n
 
+-- | Generalised version of 'fieldWith'
 fieldWith' :: TypedSchemaFlex from a -> Text -> RecordFields from a
 fieldWith' schema n = RecordFields $ liftAlt (RequiredAp n schema)
 
--- | Project a schema through a Prism. The resulting schema is empty if the Prism doesn't fit
+-- | Project a schema through a Prism. Returns a partial schema.
+--   When encoding/decoding a value that doesn't fit the prism,
+--   an optional field will be omitted, and a required field will cause
+--   this alternative to be aborted.
 liftPrism :: Text -> Prism s t a b -> TypedSchemaFlex a b -> TypedSchemaFlex s t
 liftPrism n p sc = withPrism p $ \t f -> rmap t (TTry n sc (either (const Nothing) Just . f))
 
--- | Use this to build schemas for 'optFieldWith'. The resulting schema is empty for the Nothing case
+-- | @liftJust = liftPrism _Just@
 liftJust :: TypedSchemaFlex a b -> TypedSchemaFlex (Maybe a) (Maybe b)
 liftJust = liftPrism "Just" _Just
 
--- | Use this to build schemas for 'optFieldEitherWith'. The resulting schema is empty for the Left case
+-- | @liftRight = liftPrism _Right@
 liftRight :: TypedSchemaFlex a b -> TypedSchemaFlex (Either c a) (Either c b)
 liftRight = liftPrism "Right" _Right
 
@@ -185,6 +217,7 @@ optFieldWith
     -> RecordFields from (Maybe a)
 optFieldWith schema n = RecordFields $ liftAlt (OptionalAp n schema Nothing)
 
+-- | The most general introduction form for optional fields
 optFieldGeneral
     :: forall a from
      . TypedSchemaFlex from a
@@ -217,17 +250,39 @@ extractFieldsHelper f = runAlt_ (\x -> pure [f x]) . getRecordFields
 -- --------------------------------------------------------------------------------
 -- Typed Unions
 
+-- | The schema of discriminated unions
+--
+-- @
+--   import Schemas
+--   import "generic-lens" Data.Generics.Labels ()
+--   import GHC.Generics
+--
+--   data Education = Degree Text | PhD Text | NoEducation
+--
+--   schemaEducation = union'
+--     [ alt "NoEducation" #_NoEducation
+--     , alt "Degree"      #_Degree
+--     , alt "PhD"         #_PhD
+--     ]
+--   @
+
+-- | Given a non empty set of tagged partial schemas, constructs the schema that applies
+--   them in order and selects the first successful match.
 union :: (NonEmpty (Text, TypedSchema a)) -> TypedSchema a
 union args = TOneOf (mk <$> args)
  where
   mk (name, sc) = RecordSchema $ fieldWith' sc name
 
+-- | Existential wrapper for convenient definition of discriminated unions
 data UnionTag from where
   UnionTag :: Text -> Prism' from b -> TypedSchema b -> UnionTag from
 
+-- | @altWith name prism schema@ introduces a discriminated union alternative
 altWith :: TypedSchema a -> Text -> Prism' from a -> UnionTag from
 altWith sc n p = UnionTag n p sc
 
+-- | Given a non empty set of constructors, construct the schema that selects the first
+--   matching constructor
 union' :: (NonEmpty (UnionTag from)) -> TypedSchema from
 union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism c p sc)
 

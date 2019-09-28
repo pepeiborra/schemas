@@ -2,7 +2,28 @@ cabal-version:       2.0
 name:                schemas
 version:             0.1.1.0
 synopsis:            schema guided serialization
--- description:
+description:
+  Schemas is a Haskell library for serializing and deserializing data in JSON.
+  With schemas one does not define parsing and encoding functions, instead one
+  defines a schema that explains the "shape" of the data, and the library provides
+  the encode and decode functions. Shape descriptions are statically typed.
+  .
+  Schemas are related by a subtyping relation, which can be used to implement
+  a simple form of schema versioning. As long as one knows the source and target
+  schemas, and the source is a subtype of the target, source values can be encoded
+  in the target schema.
+  .
+  The library also supports @oneOf@ and @allOf@ schemas, which extend the
+  range of versioning changes that can be supported automatically without
+  resorting to explicit versions and conversion functions.
+  .
+  A type class @HasSchema@ is provided purely for convenience, but none of the
+  core functions in the library rely on type classes.
+  .
+  Schemas can be derived generically using @generics-sop@, although most of the
+  time it makes more sense to define the schemas explicitly to ensure well-behaved
+  versioning.
+
 -- bug-reports:
 license:             BSD3
 license-file:        LICENSE

@@ -38,6 +38,11 @@ import           Text.Read
 -- Schemas
 -- --------------------------------------------------------------------------------
 
+-- | A schema for untyped data, such as JSON or XML.
+--
+--   * introduction forms: 'extractSchema', 'theSchema', 'mempty'
+--   * operations: 'isSubtypeOf', 'versions', 'coerce', 'validate'
+--   * composition: '(<>)'
 data Schema
   = Array Schema
   | StringMap Schema

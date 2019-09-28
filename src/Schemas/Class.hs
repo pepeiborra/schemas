@@ -145,7 +145,7 @@ instance Key String where
 
 -- HasSchema aware combinators
 -- -----------------------------------------------------------------------------------
-
+-- | Extract the default 'Schema' for a type
 theSchema :: forall a . HasSchema a => Schema
 theSchema = extractSchema (schema @a)
 
@@ -156,6 +156,9 @@ validatorsFor = extractValidators (schema @a)
 encode :: HasSchema a => a -> Value
 encode = encodeWith schema
 
+-- | Attempt to encode to the target schema using the default schema.
+--   First encodes using the default schema, then computes a coercion
+--   applying 'isSubtypeOf', and then applies the coercion to the encoded data.
 encodeTo :: HasSchema a => Schema -> Maybe (a -> Value)
 encodeTo = encodeToWith schema
 
@@ -163,9 +166,12 @@ encodeTo = encodeToWith schema
 finiteEncode :: forall a. HasSchema a => Natural -> a -> Value
 finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
 
+-- | Decode using the default schema.
 decode :: HasSchema a => Value -> Either [(Trace, DecodeError)] a
 decode = decodeWith schema
 
+-- | Apply `isSubtypeOf` to construct a coercion from the source schema to the default schema,
+--   apply the coercion to the data, and attempt to decode using the default schema.
 decodeFrom :: HasSchema a => Schema -> Maybe (Value -> Either [(Trace, DecodeError)] a)
 decodeFrom = decodeFromWith schema
 
@@ -175,12 +181,15 @@ coerce = case isSubtypeOf (validatorsFor @sub) (theSchema @sub) (theSchema @sup)
   Right cast -> Just . cast
   _          -> const Nothing
 
+-- | @field name get@ introduces a field with the default schema for the type
 field :: HasSchema a => Text -> (from -> a) -> RecordFields from a
 field = fieldWith schema
 
+-- | @optField name get@ introduces an optional field with the default schema for the type
 optField :: forall a from. HasSchema a => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
 optField n get = optFieldWith (lmap get $ liftJust (schema @a)) n
 
+-- | @optFieldEither name get@ introduces an optional field with the default schema for the type
 optFieldEither
     :: forall a from e
      . HasSchema a
@@ -190,5 +199,6 @@ optFieldEither
     -> RecordFields from (Either e a)
 optFieldEither n x e = optFieldGeneral (lmap x $ liftRight schema) n (Left e)
 
+-- | @alt name prism@ introduces a discriminated union alternative with the default schema
 alt :: HasSchema a => Text -> Prism' from a -> UnionTag from
 alt = altWith schema

@@ -1,26 +1,46 @@
 {-# LANGUAGE PatternSynonyms #-}
+
+-- | As a simple example of a schema, let's consider a simple record type:
+--
+-- @
+--  import Schemas
+--  import Schemas.SOP
+--
+--  data Person = Person
+--    { name      :: String
+--    , age       :: Int
+--    , addresses :: [String]
+--    }
+--
+--  personSchema :: TypedSchema Person
+--  personSchema = record $ Person
+--    \<$\> fieldWith string "name" name
+--    \<*\> fieldWith int    "age"  age
+--    \<*\> fieldWith (list string) "addresses" addresses
+-- @
+--
+-- Or, by relying on the @HasSchema@ type class:
+--
+-- @
+--  personSchema :: TypedSchema Person
+--  personSchema = record $ Person
+--    \<$\> field "name" name
+--    \<*\> field "age"  age
+--    \<*\> field "addresses" addresses
+-- @
+--
+-- Or, if the type is SOP generic:
+--
+-- @
+-- personSchema = gSchema defOptions
+-- @
+
 module Schemas
  (
-  -- * Schemas
-    Field(..)
-  , Schema(.., Empty, Union)
-  , _Empty
-  , _Union
-  -- ** functions for working with schemas
-  , Mismatch(..)
-  , Trace
-  , isSubtypeOf
-  , versions
-  , coerce
-  , finite
-  , validate
-  , validatorsFor
   -- * Typed schemas
+    TypedSchemaFlex
   , TypedSchema
-  , TypedSchemaFlex
   , HasSchema(..)
-  , theSchema
-  , extractSchema
   -- ** Construction
   , enum
   , readShow
@@ -30,11 +50,10 @@ module Schemas
   , stringMap
   , viaJSON
   , viaIso
-  , oneOf
   -- *** Applicative record definition
   , record
-  , RecordField
   , RecordFields
+  , RecordField
   , field
   , fieldWith
   , fieldWith'
@@ -47,15 +66,17 @@ module Schemas
   , fieldNameL
   , overFieldNames
   , extractFields
+  -- *** Partial schemas
   , liftJust
   , liftRight
   , liftPrism
   -- *** Unions
   , union
   , union'
-  , UnionTag(..)
   , alt
   , altWith
+  , UnionTag
+  , oneOf
   -- * Encoding
   , encode
   , decode
@@ -69,6 +90,24 @@ module Schemas
   -- * working with recursive schemas
   , finiteValue
   , finiteEncode
+
+  -- * Untyped schemas
+  , Schema(.., Empty, Union)
+  ,  Field(..)
+  , _Empty
+  , _Union
+  -- ** Extraction
+  , extractSchema
+  , theSchema
+  -- ** Functions
+  , Mismatch(..)
+  , Trace
+  , isSubtypeOf
+  , versions
+  , coerce
+  , finite
+  , validate
+  , validatorsFor
   -- * Reexports
   , Profunctor(..)
   )
@@ -78,3 +117,4 @@ import Data.Profunctor
 import Schemas.Class
 import Schemas.Internal
 import Schemas.Untyped
+
