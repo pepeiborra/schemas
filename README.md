@@ -1,7 +1,12 @@
 [![CI](https://travis-ci.com/pepeiborra/schemas.svg)](https://travis-ci.org/pepeiborra/threepenny-editors)
 [![Hackage](https://img.shields.io/hackage/v/schemas.svg)](https://hackage.haskell.org/package/threepenny-editors)
 # schemas
-A library for schema-guided serialization of Haskell data types. 
+
+schemas is a Haskell-centric serialization library written with versioning in mind. Since a schema is a first-class citizen, it can be serialized, reasoned about, and transmitted together with the data. Serialization and deserialization work better when the source schema is provided, and versioning is accomplished by checking that the two schemas are related by a subtyping relation. This alleviates the need to keep old versions of datatypes around.
+
+Consider a schema modification that adds a field. To support upgrading old documents to the new schema, the only requirement is that the new field is optional. Downgrading is easy too, simply omit the new field. Conversely, a schema modifcation that removes a field supports trivial upgrades but the removed field must be optional to support downgrading. Changing the type of a field is supported in as much as the old and new types are relatable. Field renaming is not supported. More importantly, all these changes are defined by a schema relation, and the library provides a predicate to check whether the relation holds.
+
+schemas can also be used in a GraphQL-like fashion, allowing clients to request a subset of the schema. This comes up specially when working with recursive schemas involving cyclic data.
 
 ## Features
 * schemas are first-class citizens and can be reasoned about,
@@ -11,11 +16,20 @@ A library for schema-guided serialization of Haskell data types.
 
 ## Why schemas
 
-schemas is a Haskell-centric serialization library written with versioning in mind. Since a schema is a first-class citizen, it can be serialized and reasoned about. Serialization and deserialization require a source and target schema, and versioning is accomplished by checking that the two schemas are related by a subtyping relation. There is no need to keep old versions of datatypes around nor to write code for upgrades/downgrades.
+A quick seach in Hackage reveals a large number of libraries about schemas, including [json-schema], [hjsonschema], [aeson-schema], [aeson-schemas] and [hschema], amongst others.
+There's undoubtedly a large amount of overlapping amongst all these libraries, so the immediate question is, why introduce another one ? 
 
-Consider a schema modification that adds a field. To support upgrading old documents to the new schema, the only requirement is that the new field is optional. Downgrading is easy too, simply omit the new field. Conversely, a schema modifcation that removes a field supports trivial upgrades but the removed field must be optional to support downgrading. Changing the type of a field is supported in as much as the old and new types are relatable. Field renaming is not supported. More importantly, all these changes are defined by a schema relation, and the library provides a predicate to check whether the relation holds.
+This library is a re-implementation of an encoding library found in the Strats codebase at Standard Chartered Bank, the origins of which is go back a few years in time.
+It predates other libraries that accomplish a similar task, including most of the ones mentioned before.
+The approach has worked well but the codebase is showing its age and limitations, notably the lack of decoding capabilities.
+This library extends the original approach with decoding and alternatives, hopefully keeping the good parts like the subtyping relation, intact.
+ 
+[json-schema]: http://hackage.haskell.org/packages/json-schema
+[hjsonschema]: http://hackage.haskell.org/packages/hjsonschema
+[aeson-schema]: http://hackage.haskell.org/packages/aeson-schema
+[aeson-schemas]: http://hackage.haskell.org/packages/aeson-schemas
+[hschema]: http://hackage.haskell.org/packages/hschema
 
-schemas can also be used in a GraphQL-like fashion, allowing clients to request a subset of the schema. This comes up specially when working with recursive schemas involving cyclic data.
 
 ## Subtyping relation
 
