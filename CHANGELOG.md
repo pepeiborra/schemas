@@ -1,6 +1,10 @@
 # Revision history for schemas
 
-## 0.1.1.0 -- 
+## 0.1.2.0 --  2019-09-29
+* Add OpenApi2 encoding
+* Change the `Semigroup` instance for typed schemas
+
+## 0.1.1.0 --  2019-09-28
 * Fixed several bugs in `isSubtypeOf` and `encodeWith`
 * Better error messages when encoding with a partial schema fails
 * New: 'liftPrism' and 'oneOf'
