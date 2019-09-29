@@ -133,9 +133,9 @@ instance Profunctor TypedSchemaFlex where
 instance Monoid a => Monoid (TypedSchemaFlex f a) where
   mempty = TEmpty mempty
 
-instance Semigroup a => Semigroup (TypedSchemaFlex f a) where
+instance Semigroup (TypedSchemaFlex f a) where
   -- | Allows defining multiple schemas for the same thing, effectively implementing versioning.
-  TEmpty a <> TEmpty b = TEmpty (a <> b)
+  TEmpty a <> TEmpty _ = TEmpty a
   TEmpty{} <> x = x
   x <> TEmpty{} = x
   TAllOf aa <> b = allOf (aa <> [b])
