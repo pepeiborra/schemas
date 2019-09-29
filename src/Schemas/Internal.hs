@@ -169,8 +169,8 @@ instance Profunctor RecordField where
 --
 -- @
 --  schemaPerson = Person
---             <$> (field "name" name <|> field "full name" name)
---             <*> (field "age" age <|> pure -1)
+--             \<$\> (field "name" name \<|\> field "full name" name)
+--             \<*\> (field "age" age \<|\> pure -1)
 -- @
 newtype RecordFields from a = RecordFields {getRecordFields :: Alt (RecordField from) a}
   deriving newtype (Alternative, Applicative, Functor, Monoid, Semigroup)
@@ -260,9 +260,9 @@ extractFieldsHelper f = runAlt_ (\x -> pure [f x]) . getRecordFields
 --   data Education = Degree Text | PhD Text | NoEducation
 --
 --   schemaEducation = union'
---     [ alt "NoEducation" #_NoEducation
---     , alt "Degree"      #_Degree
---     , alt "PhD"         #_PhD
+--     [ alt \"NoEducation\" #_NoEducation
+--     , alt \"Degree\"      #_Degree
+--     , alt \"PhD\"         #_PhD
 --     ]
 --   @
 
