@@ -1,5 +1,8 @@
 # Revision history for schemas
 
+## 0.2.0.1 --  2019-10-02
+* Fixed subtyping relation for arrays
+
 ## 0.2.0 --  2019-09-29
 * Add OpenApi2 encoding
 * Change the `Semigroup` instance for typed schemas
