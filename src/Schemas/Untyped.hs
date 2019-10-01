@@ -234,7 +234,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
   go ctx (StringMap a) (StringMap b) = do
     f <- go ("Map" : ctx) a b
     pure $ over (_Object . traverse) f
-  go _tx a (Array b) | a == b = pure (A.Array . fromList . (: []))
+  go _tx (Array a) b | a == b = pure (A.Array . fromList . (: []))
   go ctx (Enum opts) (Enum opts') =
     case NE.nonEmpty $ NE.filter (`notElem` opts) opts' of
       Nothing -> pure id

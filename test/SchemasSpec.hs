@@ -49,8 +49,8 @@ spec = do
       Record [makeField "a" prim True]
         `shouldBeSubtypeOf` Record [makeField "a" prim False]
     it "subtypes can relax the type of a field" $ do
-      Record [makeField "a" (Array prim) True]
-        `shouldBeSubtypeOf` Record [makeField "a" prim True]
+      Record [makeField "a" prim True]
+        `shouldBeSubtypeOf` Record [makeField "a" (Array prim) True]
     it "subtypes cannot remove Required fields" $ do
       Record [makeField "def" prim True] `shouldNotBeSubtypeOf` Record
         [makeField "def" prim True, makeField "a" prim True]
@@ -67,10 +67,10 @@ spec = do
     it "subtypes cannot add constructors" $ do
       Union [constructor' "A" prim, constructor' "B" Empty]
         `shouldNotBeSubtypeOf` Union [constructor' "A" (prim)]
-    it "subtypes can expand an array" $ do
-      Array prim `shouldBeSubtypeOf` prim
-    it "subtypes cannot drop an array" $ do
-      prim `shouldNotBeSubtypeOf` Array prim
+    it "subtypes can drop an array" $ do
+      prim `shouldBeSubtypeOf` Array prim
+    it "subtypes cannot introduce an array" $ do
+      Array prim `shouldNotBeSubtypeOf` prim
   describe "examples" $ do
     describe "Schemas" $ do
       prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
