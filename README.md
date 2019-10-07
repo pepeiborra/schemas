@@ -53,7 +53,7 @@ The `~` relation is an equivalence class, i.e. it is reflexive, symmetric and tr
 Sometimes there is more than one way to encode a value. A field can be renamed or change its type, an optional field become mandatory, several fields can be merged into one, etc. Alternative encodings allow for backwards compatible schema evolution.
 This library support alternative encodings via the `Monoid` instance for typed schemas and the `Alternative` instance for `RecordFields`. 
 
-The schema `A|B` encodes a value in two alternative ways `A` and `B`. A message created with this schema may encodings A, B or both. 'encode' will always create messages with all the possible encodings. While messages with multiple alternative encodings are not desirable for serialization, the desired message can be carved out using the subtyping relation. All the following hold:
+The schema `A|B` encodes a value in two alternative ways `A` and `B`. A message created with this schema may use encodings A, B or both. 'encode' will always create messages with all the possible encodings. While messages with multiple alternative encodings are not desirable for serialization, the desired message can be carved out using the subtyping relation. All the following hold:
 ```
 A < A|B (the coercion A -> A|B will produce a message with an A encoding)
 B < A|B (the coercion B -> A|B will produce a message with a  B encoding)
