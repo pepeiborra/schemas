@@ -121,6 +121,7 @@ instance (HasSchema a, HasSchema b, HasSchema c, HasSchema d, HasSchema e) => Ha
 
 instance (HasSchema a, HasSchema b) => HasSchema (Either a b) where
   schema = union' [alt "Left" _Left, alt "Right" _Right]
+        <> union' [alt "left" _Left, alt "right" _Right]
 
 instance (Eq key, Hashable key, HasSchema a, Key key) => HasSchema (HashMap key a) where
   schema = dimap toKeyed fromKeyed $ stringMap schema

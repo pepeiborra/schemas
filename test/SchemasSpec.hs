@@ -71,6 +71,11 @@ spec = do
       prim `shouldBeSubtypeOf` Array prim
     it "subtypes cannot introduce an array" $ do
       Array prim `shouldNotBeSubtypeOf` prim
+  describe "HasSchema" $ do
+    it "Left is a constructor of Either" $ do
+      Union [constructor' "Left" Empty] `shouldBeSubtypeOf` theSchema @(Either () ())
+    it "left is a constructor of Either too" $ do
+      Union [constructor' "left" Empty] `shouldBeSubtypeOf` theSchema @(Either () ())
   describe "examples" $ do
     describe "Schemas" $ do
       prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
