@@ -1,5 +1,8 @@
 # Revision history for schemas
 
+## 0.2.0.2 --  2019-10-07
+* Change the default schema for `Either` to handle both CamelCase and lowercase
+
 ## 0.2.0.1 --  2019-10-02
 * Fixed subtyping relation for arrays
 
