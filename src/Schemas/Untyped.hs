@@ -145,7 +145,7 @@ data Mismatch
   = MissingRecordField { name :: Text }
   | MissingEnumChoices { choices :: NonEmpty Text }
   | OptionalRecordField { name :: Text }
-  | InvalidRecordField { name :: Text, mismatches :: [Mismatch] }
+  | InvalidRecordField { name :: Text, mismatches :: [(Trace, Mismatch)] }
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
   | InvalidConstructor { name :: Text}
   | InvalidUnionValue  { contents :: Value}
@@ -154,9 +154,11 @@ data Mismatch
   | EmptyAllOf
   | PrimValidatorMissing { name :: Text }
   | PrimError {name, primError :: Text}
+  | PrimMismatch {have, want :: Text}
   | InvalidChoice{choiceNumber :: Int}
   | TryFailed { name :: Text }
-  | AllAlternativesFailed { mismatches :: [Mismatch]}
+  | AllAlternativesFailed { mismatches :: [(Trace,Mismatch)]}
+  | NoMatches
   deriving (Eq, Show, Typeable)
 
 instance Exception Mismatch
@@ -226,7 +228,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
   go _tx (StringMap _) Empty     = pure $ const emptyValue
   go _tx OneOf{}       Empty     = pure $ const emptyValue
   go ctx (Prim      a) (Prim b ) = do
-    unless (a == b) $ failWith ctx (PrimError a b)
+    unless (a == b) $ failWith ctx (PrimMismatch b a)
     pure id
   go ctx (Array a)     (Array b) = do
     f <- go ("[]" : ctx) a b
