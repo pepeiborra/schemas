@@ -26,6 +26,7 @@ import           Data.Foldable              (asum)
 import           Data.Functor.Compose
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as Map
+import qualified Data.HashSet               as Set
 import           Data.List.NonEmpty         (NonEmpty (..))
 import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
@@ -46,7 +47,7 @@ import           Schemas.Untyped
 --   for composition.
 --
 --   * introduction forms: 'record', 'enum', 'schema'
---   * operations: 'encodeTo', 'decodeFrom', 'extractSchema'
+--   * operations: 'encodeToWith', 'decodeFrom', 'extractSchema'
 --   * composition: 'dimap', 'union', 'stringMap', 'liftPrism'
 --
 data TypedSchemaFlex from a where
@@ -216,7 +217,7 @@ optFieldWith
     -> RecordFields from (Maybe a)
 optFieldWith schema n = RecordFields $ liftAlt (OptionalAp n schema Nothing)
 
--- | The most general introduction form for optional fields
+-- | The most general introduction form for optional alts
 optFieldGeneral
     :: forall a from
      . TypedSchemaFlex from a
@@ -322,10 +323,12 @@ extractValidators _ = []
 -- ---------------------------------------------------------------------------------------
 -- Encoding to JSON
 
+type E = [(Trace, Mismatch)]
+
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
   -- TODO Better error messages to help debug partial schemas ?
-encodeWith sc = either (throw . AllAlternativesFailed) id . runExcept . go sc where
+encodeWith sc = either (throw . AllAlternativesFailed . map ([],)) id . runExcept . go sc where
   go :: TypedSchemaFlex from a -> from -> Except [Mismatch] Value
   go (TAllOf scc       ) x = encodeAlternatives <$> traverse (`go` x) scc
   go (TOneOf scc       ) x = asum (fmap (`go` x) scc)
@@ -340,23 +343,86 @@ encodeWith sc = either (throw . AllAlternativesFailed) id . runExcept . go sc wh
     let results =
           partitionEithers $ nonDet $ fmap (runExcept . sequenceA) alternatives
     case results of
-      (_, NE.nonEmpty -> Just fields') -> pure $ encodeAlternatives $ fmap
+      (_, NE.nonEmpty -> Just alts') -> pure $ encodeAlternatives $ fmap
         (A.Object . fromList . catMaybes)
-        fields'
+        alts'
       (ee, _) -> throwE (concat ee)
    where
 
     extractField b RequiredAp {..} =
       Just . (fieldName, ) <$> go fieldTypedSchema b `catchE` \mm ->
-        throwE [InvalidRecordField fieldName mm]
+        throwE [InvalidRecordField fieldName (map ([],) mm)]
     extractField b OptionalAp {..} =
       (Just . (fieldName, ) <$> go fieldTypedSchema b)
         `catchE` \_ -> pure Nothing
 
-encodeToWith :: TypedSchema a -> Schema -> Maybe (a -> Value)
-encodeToWith sc target = case isSubtypeOf (extractValidators sc) (extractSchema sc) target of
-  Right cast -> Just $ cast . encodeWith sc
-  _ -> Nothing
+encodeToWith :: TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
+encodeToWith sc target =
+  (\m -> either (throw . AllAlternativesFailed) id . runExcept . m)
+    <$> runExcept (go [] sc target)
+ where
+  failWith ctx m = throwE [(reverse ctx, m)]
+
+  go
+    :: Trace
+    -> TypedSchemaFlex from a
+    -> Schema
+    -> Except E (from -> Except E Value)
+  go ctx (TAllOf scc) t = asum $ imap (\i sc -> go (tag i : ctx) sc t) scc
+  go ctx (TOneOf scc) t = do
+    alts <- itraverse (\i sc -> go (tag i : ctx) sc t) scc
+    return $ \x -> asum $ fmap ($ x) alts
+  go ctx sc (OneOf tt) = asum $ fmap (go ctx sc) tt
+  go ctx (TTry n sc try) t = do
+    f <- go (n : ctx) sc t
+    return $ \x -> f =<< maybe (failWith ctx (TryFailed n)) pure (try x)
+  go ctx (TEnum opts fromf) (Enum optsTarget) =
+    case NE.nonEmpty $ NE.filter (`notElem` optsTarget) (fst <$> opts) of
+      Nothing -> pure $ pure . A.String . fromf
+      Just xx -> failWith ctx $ MissingEnumChoices xx
+  go ctx (TPrim n _ fromf) (Prim n')
+    | n == n'   = pure $ pure . fromf
+    | otherwise = failWith ctx (PrimMismatch n n')
+  go _tx TEmpty{}            Empty     = pure $ pure . const emptyValue
+  go ctx (TArray sc _ fromf) (Array t) = do
+    f <- go ("[]" : ctx) sc t
+    return $ A.Array <.> traverse f . fromf
+  go ctx (TMap sc _ fromf) (StringMap t) = do
+    f <- go ("Map" : ctx) sc t
+    return $ A.Object <.> traverse f . fromf
+  go ctx (RecordSchema rec) (Record ff) = do
+    let alternatives =
+          [ runExcept $ sequenceOf (traverse . _2) alt
+          | altMb <- nonDet $ extractFieldsHelper
+            (\f -> (fieldName f, ) <$> extractField f)
+            rec
+          , let alt = catMaybes altMb
+          , Set.fromList (Map.keys ff) == Set.fromList (fmap fst alt)
+          ]
+    case partitionEithers alternatives of
+      (_, NE.nonEmpty -> Just alts) -> pure $ \x -> asum $ fmap
+        (\alt ->
+          A.Object
+            .   fromList
+            .   (mapMaybe (sequenceOf _2))
+            <$> traverse (\(fn, f) -> (fn, ) <$> f x) alt
+        )
+        alts
+      ([], _) -> failWith ctx NoMatches
+      (ee, _) -> failWith ctx $ AllAlternativesFailed (concat ee)
+   where
+    extractField
+      :: RecordField from a -> Maybe (Except E (from -> Except E (Maybe Value)))
+    extractField RequiredAp {..} | Just f <- Map.lookup fieldName ff = Just $ do
+      f <- go (fieldName : ctx) fieldTypedSchema (fieldSchema f)
+      return $ \x -> Just <$> f x `catchE` \mm ->
+        failWith ctx (InvalidRecordField fieldName mm)
+    extractField OptionalAp {..} | Just f <- Map.lookup fieldName ff = Just $ do
+      f <- go (fieldName : ctx) fieldTypedSchema (fieldSchema f)
+      return $ \x -> (Just <$> f x) `catchE` \_ -> pure Nothing
+    extractField _ = Nothing
+  go ctx other tgt = failWith ctx (SchemaMismatch (extractSchema other) tgt)
+
 
 -- --------------------------------------------------------------------------
 -- Decoding
@@ -384,7 +450,7 @@ runSchema sc = runExcept . go sc
         go (TArray _sc toF fromF) from = pure $ toF (fromF from)
         go (TAllOf scc          ) from = msum $ (`go` from) <$> scc
         go (TOneOf scc          ) from = msum $ (`go` from) <$> scc
-        go (RecordSchema fields ) from = runAlt f (getRecordFields fields)
+        go (RecordSchema alts ) from = runAlt f (getRecordFields alts)
             where
                 f :: RecordField from b -> Except [DecodeError] b
                 f RequiredAp{..} = go fieldTypedSchema from
@@ -415,18 +481,18 @@ decodeWith sc = runExcept . go [] sc
   go ctx (RecordSchema rec) o@A.Object{} = do
     let alts = decodeAlternatives o
     asum $ concatMap
-      (\(A.Object fields, _encodedPath) ->
-          getCompose $ runAlt (Compose . (: []) . f fields) (getRecordFields rec)
+      (\(A.Object alts, _encodedPath) ->
+          getCompose $ runAlt (Compose . (: []) . f alts) (getRecordFields rec)
       )
       alts
    where
     f :: A.Object -> RecordField from a -> Except [(Trace, DecodeError)] a
-    f fields (RequiredAp n sc) = case Map.lookup n fields of
+    f alts (RequiredAp n sc) = case Map.lookup n alts of
       Just v  -> go (n : ctx) sc v
       Nothing -> case sc of
         TArray _ tof' _ -> pure $ tof' []
         _               -> failWith ctx (MissingRecordField n)
-    f fields OptionalAp {..} = case Map.lookup fieldName fields of
+    f alts OptionalAp {..} = case Map.lookup fieldName alts of
       Just v  -> go (fieldName : ctx) fieldTypedSchema v
       Nothing -> pure fieldDefValue
 
@@ -460,5 +526,5 @@ runAlt_ f = fmap getConst . getCompose . runAlt (Compose . fmap Const . f)
 (<.>) :: Functor f => (b -> c) -> (a -> f b) -> a -> f c
 f <.> g = fmap f . g
 
-infixr 9 <.>
+infixr 8 <.>
 

@@ -13,6 +13,7 @@ import Person
 import Person2
 import Person3
 import Schemas
+import Schemas.Internal
 import System.Timeout
 import Test.Hspec
 import Test.Hspec.QuickCheck
@@ -24,9 +25,21 @@ main = hspec spec
 
 spec :: Spec
 spec = do
-  describe "encoding" $ do
+  describe "encode" $ do
     prop "is the inverse of decoding" $ \(sc :: Schema) ->
       decode (encode sc) ==  Right sc
+  describe "encodeTo" $ do
+    it "laziness delivers" $ do
+      evaluate (fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [makeField "bottom" prim True])) (Nothing :: Maybe Bool))
+        `shouldThrow` \(_ :: SomeException) -> True
+      fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
+        `shouldBe` A.Object []
+    it "satisfies the spec" $ do
+        let encoder = encodeTo (theSchema @Person)
+            spec    = encodeToSpec (theSchema @Person)
+        encoder `shouldSatisfy` isRight
+        spec    `shouldSatisfy` isJust
+        fromRight undefined encoder pepe `shouldBe` fromJust spec pepe
   describe "versions" $ do
     prop "eliminates AllOf" $ \sc -> all (not . hasAllOf) (versions sc)
   describe "finite" $ do
@@ -88,8 +101,8 @@ spec = do
         theSchema @Person2 `shouldBeSubtypeOf`   theSchema @Person
       it "pepe2 `as` Person" $ do
         let encoder = encodeTo (theSchema @Person)
-        encoder `shouldSatisfy` isJust
-        decode (fromJust encoder pepe2) `shouldBe` Right pepe
+        encoder `shouldSatisfy` isRight
+        decode (fromRight undefined encoder pepe2) `shouldBe` Right pepe
       it "pepe `as` Person2" $ do
         let decoder = decodeFrom (theSchema @Person)
         decoder `shouldSatisfy` isJust
@@ -99,6 +112,14 @@ spec = do
     describe "Person3" $ do
       it "finiteEncode works as expected" $ shouldLoop $ evaluate $ A.encode
         (finiteEncode 4 laura3)
+
+
+encodeToWithSpec :: TypedSchema a -> Schema -> Maybe (a -> A.Value)
+encodeToWithSpec sc target = case isSubtypeOf (extractValidators sc) (extractSchema sc) target of
+  Right cast -> Just $ cast . encodeWith sc
+  _ -> Nothing
+
+encodeToSpec tgt = encodeToWithSpec schema tgt
 
 shouldBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldBeSubtypeOf a b = case isSubtypeOf primValidators a b of
