@@ -61,9 +61,9 @@ genSchema 0 = elements [Empty, Prim "A", Prim "B"]
 genSchema n = frequency
   [ (10,) $  Record <$> do
       nfields <- choose (1,2)
-      fieldArgs <- replicateM nfields (scale (`div` 2) arbitrary)
+      fieldArgs <- replicateM nfields (scale (`div` succ nfields) arbitrary)
       return $ fromList (zipWith (\n (sc,a) -> (n, Field sc a)) fieldNames fieldArgs)
-  , (10,) $ Array  <$> scale(`div`2) arbitrary
+  , (10,) $ Array  <$> scale(`div` 4) arbitrary
   , (10,) $ Enum   <$> do
       n <- choose (1,2)
       return $ fromList $ take n ["Enum1", "Enum2"]
@@ -71,7 +71,7 @@ genSchema n = frequency
   , (1,) $ OneOf . fromList <$> listOf1 (genSchema (n`div`10))
   , (5,) $ review _Union <$> do
       nconstructors <- choose (1,2)
-      args <- replicateM nconstructors (genSchema (n`div`nconstructors))
+      args <- replicateM nconstructors (genSchema (n`div` succ nconstructors))
       return $ fromList $ zip constructorNames args
   , (50,) $ genSchema 0
   ]

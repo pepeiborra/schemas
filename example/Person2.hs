@@ -7,6 +7,8 @@ module Person2 where
 
 import           Control.Applicative
 import           Data.Generics.Labels  ()
+import           Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import           Data.String
 import           GHC.Exts (IsList(..))
 import           Person
@@ -19,7 +21,7 @@ data Person2 = Person2
   , age       :: Int
   , addresses :: [String]
   , religion  :: (Maybe Religion)  -- new
-  , education :: Education         -- renamed
+  , education :: NonEmpty Education         -- renamed
   }
   deriving (Eq, Show)
 
@@ -40,16 +42,19 @@ instance HasSchema Person2 where
       <*> field "age"       Person2.age
       <*> field "addresses" Person2.addresses
       <*> optField "religion"  Person2.religion
-      <*> (field "education" Person2.education <|> field "studies" Person2.education)
+      <*> (field "education" Person2.education <|> (NE.:| []) <$> field "studies" (NE.head . Person2.education))
 
 pepe2 :: Person2
 pepe2 = Person2 "Pepe"
                 38
                 ["2 Edward Square", "La Mar 10"]
                 Nothing
-                (PhD "Computer Science")
+                [PhD "Computer Science", Degree "Engineering" ]
 
 -- Person2 can be encoded in multiple ways, so the canonic encoding includes all ways
+-- >>> import qualified Data.ByteString.Lazy.Char8 as B
+-- >>> import Data.Aeson.Encode.Pretty
+-- >>> B.putStrLn $ encodePretty $ encodeTo (theSchema @Person2) pepe2
 -- {
 --     "#1": {
 --         "education": {
