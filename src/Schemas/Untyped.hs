@@ -34,6 +34,9 @@ import           Numeric.Natural
 import           Prelude                    hiding (lookup)
 import           Text.Read
 
+-- import           Debug.Pretty.Simple
+
+
 -- Schemas
 -- --------------------------------------------------------------------------------
 
@@ -64,7 +67,11 @@ data Field = Field
   { fieldSchema :: Schema
   , isRequired  :: Bool -- ^ defaults to True
   }
-  deriving (Eq, Generic, Show)
+  deriving (Eq, Generic)
+
+instance Show Field where
+  showsPrec p (Field sc True) = showsPrec p sc
+  showsPrec p (Field sc False) = ("?" ++) . showsPrec p sc
 
 fieldSchemaL :: Applicative f => (Schema -> f Schema) -> Field -> f Field
 fieldSchemaL f Field{..} = Field <$> f fieldSchema <*> pure isRequired
@@ -222,6 +229,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
 
         -- TODO go: fix confusing order of arguments
   go :: Trace -> Schema -> Schema -> Except [(Trace,Mismatch)] (Value -> Value)
+--  go _ sup sub | pTraceShow ("isSubtypeOf", sub, sup) False = undefined
   go _tx Empty         _         = pure $ const emptyValue
   go _tx (Array     _) Empty     = pure $ const (A.Array [])
   go _tx (Record    _) Empty     = pure $ const emptyValue
@@ -236,7 +244,6 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
   go ctx (StringMap a) (StringMap b) = do
     f <- go ("Map" : ctx) a b
     pure $ over (_Object . traverse) f
-  go _tx (Array a) b | a == b = pure (A.Array . fromList . (: []))
   go ctx (Enum opts) (Enum opts') =
     case NE.nonEmpty $ NE.filter (`notElem` opts) opts' of
       Nothing -> pure id
@@ -282,6 +289,9 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
       (\(sc, f) -> if null (validate validators sc v) then Just (f v) else Nothing)
       (toList alts)
   go ctx (OneOf sup) sub = asum $ fmap (\x -> go ctx x sub) sup
+  go ctx (Array a) b = do
+    f <- go ctx a b
+    pure (A.Array . fromList . (: []) . f)
   go _tx a b | a == b  = pure id
   go ctx a b           = failWith ctx (SchemaMismatch a b)
 

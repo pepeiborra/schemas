@@ -14,14 +14,16 @@ import Person2
 import Person3
 import Schemas
 import Schemas.Internal
+import Schemas.Untyped (Validators)
 import System.Timeout
 import Test.Hspec
+import Test.Hspec.Runner
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
 import Text.Show.Functions ()
 
 main :: IO ()
-main = hspec spec
+main = hspecWith defaultConfig{configQuickCheckMaxSuccess = Just 10000} spec
 
 spec :: Spec
 spec = do
@@ -45,6 +47,8 @@ spec = do
   describe "finite" $ do
     it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       sc `shouldBeSubtypeOf` sc
+    it "is reflexive (corner  case)" $
+      finiteCornerCase `shouldBeSubtypeOf` finiteCornerCase
     it "always produces a supertype (in absence of OneOf)" $
       forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       forAll arbitrary $ \(SmallNatural size) ->
@@ -94,9 +98,15 @@ spec = do
       prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
         theSchema @Schema `shouldBeSubtypeOf` finite n (theSchema @Schema)
     describe "Person" $ do
-      it "decode is the inverse of encode (applicative)" $ do
+      it "decode is the inverse of encode" $ do
         decode (encode pepe) `shouldBe` Right pepe
+        decode (fromRight undefined (encodeTo (theSchema @Person)) pepe) `shouldBe` Right pepe
     describe "Person2" $ do
+      it "decode is the inverse of encode" $ do
+        decode (encode pepe2) `shouldBe` Right pepe2
+        let fullEncoder = encodeTo (theSchema @Person2)
+        fullEncoder `shouldSatisfy` isRight
+        decode (fromRight (error "internal error") fullEncoder pepe2) `shouldBe` Right pepe2
       it "Person2 < Person" $ do
         theSchema @Person2 `shouldBeSubtypeOf`   theSchema @Person
       it "pepe2 `as` Person" $ do
@@ -106,7 +116,7 @@ spec = do
       it "pepe `as` Person2" $ do
         let decoder = decodeFrom (theSchema @Person)
         decoder `shouldSatisfy` isJust
-        fromJust decoder (encode pepe) `shouldBe` Right pepe2
+        fromJust decoder (encode pepe) `shouldBe` Right pepe2{Person2.education = [Person.studies pepe]}
       it "Person < Person2" $ do
         theSchema @Person `shouldBeSubtypeOf`   theSchema @Person2
     describe "Person3" $ do
@@ -143,6 +153,11 @@ makeField n t isReq = (n, Field t isReq)
 constructor' :: a -> b -> (a, b)
 constructor' n t = (n, t)
 
+prim :: Schema
 prim = Prim "A"
 
+primValidators :: Validators
 primValidators = validatorsFor @(Schema, Double, Int, Bool)
+
+finiteCornerCase :: Schema
+finiteCornerCase = AllOf [ Array $ Prim "A"]

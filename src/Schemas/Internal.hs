@@ -31,7 +31,7 @@ import           Data.List.NonEmpty         (NonEmpty (..))
 import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
 import           Data.Semigroup
-import           Data.Text                  (Text, pack)
+import           Data.Text                  (Text, pack, unpack)
 import           Data.Tuple
 import           Data.Vector                (Vector)
 import qualified Data.Vector                as V
@@ -64,6 +64,10 @@ data TypedSchemaFlex from a where
   -- it could be exposed to provide some form of error handling, but currently is not
   TTry     :: Text -> TypedSchemaFlex a b -> (a' -> Maybe a) -> TypedSchemaFlex a' b
   RecordSchema :: RecordFields from a -> TypedSchemaFlex from a
+
+instance Show (TypedSchemaFlex from a) where
+  show (TTry n sc _) = unwords ["TTry", unpack n, show sc]
+  show x = show $ extractSchema x
 
 -- | @enum values mapping@ construct a schema for a non empty set of values with a 'Text' mapping
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
@@ -367,29 +371,36 @@ encodeToWith sc target =
     :: Trace
     -> TypedSchemaFlex from a
     -> Schema
+    -- Returns a set of mismatches or an encoding function that can fail (TTry)
     -> Except E (from -> Except E Value)
-  go ctx (TAllOf scc) t = asum $ imap (\i sc -> go (tag i : ctx) sc t) scc
-  go ctx (TOneOf scc) t = do
-    alts <- itraverse (\i sc -> go (tag i : ctx) sc t) scc
-    return $ \x -> asum $ fmap ($ x) alts
-  go ctx sc (OneOf tt) = asum $ fmap (go ctx sc) tt
-  go ctx (TTry n sc try) t = do
-    f <- go (n : ctx) sc t
-    return $ \x -> f =<< maybe (failWith ctx (TryFailed n)) pure (try x)
-  go ctx (TEnum opts fromf) (Enum optsTarget) =
-    case NE.nonEmpty $ NE.filter (`notElem` optsTarget) (fst <$> opts) of
-      Nothing -> pure $ pure . A.String . fromf
-      Just xx -> failWith ctx $ MissingEnumChoices xx
+  go _tx TEmpty{} Array{}     = pure $ pure . const (A.Array [])
+  go _tx TEmpty{} Record{}    = pure $ pure . const (A.Object [])
+  go _tx TEmpty{} StringMap{} = pure $ pure . const (A.Object [])
+  go _tx TEmpty{} OneOf{}     = pure $ pure . const emptyValue
   go ctx (TPrim n _ fromf) (Prim n')
     | n == n'   = pure $ pure . fromf
     | otherwise = failWith ctx (PrimMismatch n n')
-  go _tx TEmpty{}            Empty     = pure $ pure . const emptyValue
   go ctx (TArray sc _ fromf) (Array t) = do
     f <- go ("[]" : ctx) sc t
     return $ A.Array <.> traverse f . fromf
   go ctx (TMap sc _ fromf) (StringMap t) = do
     f <- go ("Map" : ctx) sc t
     return $ A.Object <.> traverse f . fromf
+  go ctx (TEnum opts fromf) (Enum optsTarget) = do
+    case NE.nonEmpty $ NE.filter (`notElem` optsTarget) (fst <$> opts) of
+      Nothing -> pure $ pure . A.String . fromf
+      Just xx -> failWith ctx $ MissingEnumChoices xx
+  go ctx sc              (AllOf tt) = do
+    alts <- itraverse (\i -> go (tag i : ctx) sc) tt
+    return $ \x -> encodeAlternatives <$> traverse ($x) alts
+  go ctx (TAllOf scc) t = asum $ imap (\i sc -> go (tag i : ctx) sc t) scc
+  go ctx (TOneOf scc) t = do
+    alts <- itraverse (\i sc -> go (tag i : ctx) sc t) scc
+    return $ \x -> asum $ fmap ($ x) alts
+  go ctx sc              (OneOf tt) = asum $ fmap (go ctx sc) tt
+  go ctx (TTry n sc try) t          = do
+    f <- go (n : ctx) sc t
+    return $ \x -> f =<< maybe (failWith ctx (TryFailed n)) pure (try x)
   go ctx (RecordSchema rec) (Record ff) = do
     let alternatives =
           [ runExcept $ sequenceOf (traverse . _2) alt
@@ -421,6 +432,10 @@ encodeToWith sc target =
       f <- go (fieldName : ctx) fieldTypedSchema (fieldSchema f)
       return $ \x -> (Just <$> f x) `catchE` \_ -> pure Nothing
     extractField _ = Nothing
+  go ctx sc (Array t) = do
+    f <- go ctx sc t
+    return $ A.Array . fromList . (: []) <.> f
+  go _tx _        Empty       = pure $ pure . const emptyValue
   go ctx other tgt = failWith ctx (SchemaMismatch (extractSchema other) tgt)
 
 
@@ -490,7 +505,7 @@ decodeWith sc = runExcept . go [] sc
     f alts (RequiredAp n sc) = case Map.lookup n alts of
       Just v  -> go (n : ctx) sc v
       Nothing -> case sc of
-        TArray _ tof' _ -> pure $ tof' []
+--         TArray _ tof' _ -> pure $ tof' []
         _               -> failWith ctx (MissingRecordField n)
     f alts OptionalAp {..} = case Map.lookup fieldName alts of
       Just v  -> go (fieldName : ctx) fieldTypedSchema v
