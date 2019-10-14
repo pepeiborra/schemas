@@ -75,9 +75,11 @@ test-suite spec
   type:                exitcode-stdio-1.0
   hs-source-dirs:      example, test
   main-is:             Main.hs
+  ghc-options:         -threaded -with-rtsopts=-M1G 
   other-modules:       Person
                      , Person2
                      , Person3
+                     , Person4
                      , SchemasSpec
                      , Schemas.OpenApi2Spec
                      , Generators

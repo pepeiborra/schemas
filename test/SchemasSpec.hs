@@ -7,11 +7,13 @@ module SchemasSpec where
 import Control.Exception
 import qualified Data.Aeson as A
 import Data.Either
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe
 import Generators
 import Person
 import Person2
 import Person3
+import Person4
 import Schemas
 import Schemas.Internal
 import Schemas.Untyped (Validators)
@@ -94,6 +96,16 @@ spec = do
     it "left is a constructor of Either too" $ do
       Union [constructor' "left" Empty] `shouldBeSubtypeOf` theSchema @(Either () ())
   describe "examples" $ do
+    let   person4_v0 = NE.head $ versions $ theSchema @Person4
+          person2_v0 = NE.head $ versions $ theSchema @Person2
+          person3_v0 = NE.head $ versions $ theSchema @Person3
+          person4_vPerson2 = person2_v0
+          person4_vPerson3 = person3_v0
+          encoder_p4v0 = encodeTo person4_v0
+          encoder_p3_to_p4 = encodeTo person4_vPerson3
+          encoder_p2_to_p4 = encodeTo person4_vPerson2
+          encoder_p2v0 = encodeTo person2_v0
+          encoder_p3v0 = encodeTo @Person3 person3_v0
     describe "Schemas" $ do
       prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
         theSchema @Schema `shouldBeSubtypeOf` finite n (theSchema @Schema)
@@ -102,6 +114,8 @@ spec = do
         decode (encode pepe) `shouldBe` Right pepe
         decode (fromRight undefined (encodeTo (theSchema @Person)) pepe) `shouldBe` Right pepe
     describe "Person2" $ do
+      it "can compute an encoder for Person2" $
+        encoder_p2v0 `shouldSatisfy` isRight
       it "decode is the inverse of encode" $ do
         decode (encode pepe2) `shouldBe` Right pepe2
         let fullEncoder = encodeTo (theSchema @Person2)
@@ -120,15 +134,55 @@ spec = do
       it "Person < Person2" $ do
         theSchema @Person `shouldBeSubtypeOf`   theSchema @Person2
     describe "Person3" $ do
+      it "cannot compute an encoder for Person3 (infinite schema)" $
+        shouldLoop $ evaluate encoder_p3v0
       it "finiteEncode works as expected" $ shouldLoop $ evaluate $ A.encode
         (finiteEncode 4 laura3)
-
+    describe "Person4" $ do
+      let encoded_pepe4 = fromRight undefined encoder_p4v0 pepe4
+          encoded_pepe3 = fromRight undefined encoder_p3_to_p4 pepe3{Person3.spouse = Nothing}
+          encoded_pepe2 = fromRight undefined encoder_p2_to_p4 pepe2
+          encoded_pepe2' = fromRight undefined encoder_p2v0 pepe2
+      it "can compute an encoder for Person4" $ do
+        shouldNotLoop $ evaluate encoder_p4v0
+        encoder_p4v0 `shouldSatisfy` isRight
+      it "can not compute an encoder for Person3 in finite time" $ do
+        shouldLoop $ evaluate encoder_p3_to_p4
+      it "can compute an encoder for Person2 in finite time" $ do
+        shouldNotLoop $ evaluate encoder_p2_to_p4
+      it "can encode a Person4" $ do
+        shouldNotLoop $ evaluate $ A.encode encoded_pepe4
+      it "can encode a Person2 as Person4 in finite time" $ do
+        shouldNotLoop $ evaluate $ A.encode encoded_pepe2
+      it "can decode a fully defined record with source schema" $ do
+        let res = fromJust (decodeFrom person4_v0) encoded_pepe4
+        shouldNotLoop $ evaluate res
+        res `shouldBe` Right pepe4
+      it "can decode a fully defined record without source schema" $ do
+        let res = decode encoded_pepe4
+        shouldNotLoop $ evaluate res
+        res `shouldBe` Right pepe4
+      it "can decode a Person2 encoded to Person4 with source schema" $ do
+        let res = fromJust (decodeFrom person4_vPerson2) encoded_pepe2
+        shouldNotLoop $ evaluate res
+        res `shouldBe` Right pepe4
+      it "can decode a Person2 encoded to Person4 without source schema" $ do
+        let res = decode encoded_pepe2
+        shouldNotLoop $ evaluate res
+        res `shouldBe` Right pepe4
+      it "can decode a Person2" $ do
+        let res = fromJust (decodeFrom person2_v0) encoded_pepe2'
+            holds = res == Right pepe4
+        shouldNotLoop $ evaluate holds
+        shouldNotLoop $ evaluate $ length $ show res
+        res `shouldBe` Right pepe4
 
 encodeToWithSpec :: TypedSchema a -> Schema -> Maybe (a -> A.Value)
 encodeToWithSpec sc target = case isSubtypeOf (extractValidators sc) (extractSchema sc) target of
   Right cast -> Just $ cast . encodeWith sc
   _ -> Nothing
 
+encodeToSpec :: HasSchema a => Schema -> Maybe (a -> A.Value)
 encodeToSpec tgt = encodeToWithSpec schema tgt
 
 shouldBeSubtypeOf :: Schema -> Schema -> Expectation
@@ -141,11 +195,15 @@ shouldNotBeSubtypeOf a b = case isSubtypeOf primValidators a b of
   Right _  -> expectationFailure $ show a <> " should not be a subtype of " <> show b
   _ -> pure ()
 
-shouldLoop :: (Show a, Eq a) => IO a -> Expectation
-shouldLoop act = timeout 1000000 act `shouldReturn` Nothing
+shouldLoop :: (Show a) => IO a -> Expectation
+shouldLoop act = do
+  res <- timeout 1000000 act
+  res `shouldSatisfy` isNothing
 
-shouldNotLoop :: (Show a, Eq a) => IO a -> Expectation
-shouldNotLoop act = timeout 1000000 act `shouldNotReturn` Nothing
+shouldNotLoop :: (Show a) => IO a -> Expectation
+shouldNotLoop act = do
+  res <- timeout 1000000 act
+  res `shouldSatisfy` isJust
 
 makeField :: a -> Schema -> Bool -> (a, Field)
 makeField n t isReq = (n, Field t isReq)

@@ -165,6 +165,7 @@ data Mismatch
   | InvalidChoice{choiceNumber :: Int}
   | TryFailed { name :: Text }
   | AllAlternativesFailed { mismatches :: [(Trace,Mismatch)]}
+  | UnexpectedAllOf
   | NoMatches
   deriving (Eq, Show, Typeable)
 
