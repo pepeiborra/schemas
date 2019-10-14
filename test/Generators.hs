@@ -1,9 +1,11 @@
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImpredicativeTypes         #-}
 {-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE TupleSections              #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Generators where
 
@@ -16,26 +18,16 @@ import           Schemas
 import           Test.QuickCheck
 
 hasOneOf :: Schema -> Bool
-hasOneOf (Array sc) = hasOneOf sc
+hasOneOf (Array sc)     = hasOneOf sc
 hasOneOf (StringMap sc) = hasOneOf sc
-hasOneOf (Record ff) = any (hasOneOf . fieldSchema) ff
-hasOneOf (AllOf scc) = any hasOneOf scc
-hasOneOf (OneOf   _) = True
-hasOneOf _ = False
-
-hasAllOf :: Schema -> Bool
-hasAllOf (Array sc) = hasAllOf sc
-hasAllOf (StringMap sc) = hasAllOf sc
-hasAllOf (Record ff) = any (hasAllOf . fieldSchema) ff
-hasAllOf (OneOf scc) = any hasAllOf scc
-hasAllOf (AllOf   _) = True
-hasAllOf _ = False
+hasOneOf (Record ff)    = any (hasOneOf . fieldSchema) ff
+hasOneOf (OneOf _)      = True
+hasOneOf _              = False
 
 instance Arbitrary Schema where
   arbitrary = sized genSchema
   shrink (Record fields) =
     [Record [(n,Field sc' req)] | (n,Field sc req) <- toList fields, sc' <- shrink sc]
-  shrink (AllOf scc) = [AllOf [sc'] | sc <- toList scc, sc' <- shrink sc]
   shrink (OneOf scc) = [OneOf [sc'] | sc <- toList scc, sc' <- shrink sc]
   shrink (Array sc) = [sc]
   shrink (StringMap sc) = [sc]
@@ -56,18 +48,17 @@ fieldNames = ["field1", "field2", "field3"]
 constructorNames :: [Text]
 constructorNames = ["constructor1", "constructor2"]
 
-genSchema ::  Int -> Gen (Schema)
+genSchema ::  Int -> Gen Schema
 genSchema 0 = elements [Empty, Prim "A", Prim "B"]
 genSchema n = frequency
-  [ (10,) $  Record <$> do
+  [ (10,) $ Record <$> do
       nfields <- choose (1,2)
       fieldArgs <- replicateM nfields (scale (`div` succ nfields) arbitrary)
       return $ fromList (zipWith (\n (sc,a) -> (n, Field sc a)) fieldNames fieldArgs)
-  , (10,) $ Array  <$> scale(`div` 4) arbitrary
+  , (10,) $ Array <$> scale(`div` 4) arbitrary
   , (10,) $ Enum   <$> do
       n <- choose (1,2)
       return $ fromList $ take n ["Enum1", "Enum2"]
-  , (1,) $ AllOf . fromList <$> listOf1 (genSchema (n`div`10))
   , (1,) $ OneOf . fromList <$> listOf1 (genSchema (n`div`10))
   , (5,) $ review _Union <$> do
       nconstructors <- choose (1,2)

@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -60,37 +62,41 @@ instance HasSchema Text where
 instance {-# OVERLAPPABLE #-} HasSchema a => HasSchema [a] where
   schema = list schema
 
-instance HasSchema a => HasSchema (Vector a) where
-  schema = TArray schema id id
+instance (HasSchema a) => HasSchema (Vector a) where
+  schema = vector schema
 
 instance (Eq a, Hashable a, HasSchema a) => HasSchema (HashSet a) where
   schema = list schema
 
-instance  HasSchema a => HasSchema (NonEmpty a) where
+instance  (HasSchema a) => HasSchema (NonEmpty a) where
   schema = list schema
-
-instance HasSchema Field where
-  schema = record $ Field <$> field "schema" fieldSchema <*> fmap
-    (fromMaybe True)
-    (optField "isRequired" (\x -> if isRequired x then Nothing else Just False))
 
 instance HasSchema a => HasSchema (Identity a) where
   schema = dimap runIdentity Identity schema
 
+deriving instance HasSchema SchemaName
+
 instance HasSchema Schema where
-  schema = union'
+  schema = named "Schema" $ union'
     [ alt "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
     , alt "Array"     $ prism' Array (\case Array x -> Just x ; _ -> Nothing)
     , alt "Enum"      $ prism' Enum (\case Enum x -> Just x ; _ -> Nothing)
     , alt "Record"    $ prism' Record (\case Record x -> Just x ; _ -> Nothing)
     , alt "Empty"      _Empty
-    , alt "AllOf"     $ prism' AllOf (\case AllOf x -> Just x ; _ -> Nothing)
     , alt "Prim"      $ prism' Prim (\case Prim x -> Just x ; _ -> Nothing)
     , altWith unionSchema "Union" _Union
     , alt "OneOf"     $ prism' OneOf (\case OneOf x -> Just x ; _ -> Nothing)
+    , altWith namedSchema "Named" $ prism' (uncurry Named) (\case Named s sc -> Just (s,sc) ; _ -> Nothing)
     ]
     where
+      namedSchema = record $ (,) <$> field "name" fst <*> field "schema" snd
       unionSchema = list (record $ (,) <$> field "constructor" fst <*> field "schema" snd)
+
+instance HasSchema Field where
+  schema = record $
+        Field <$> field "schema" fieldSchema
+              <*> fmap (fromMaybe True) (optField "isRequired" (\x -> if isRequired x then Nothing else Just False))
+
 
 instance HasSchema Value where
   schema = viaJSON "JSON"
@@ -148,7 +154,7 @@ instance Key String where
 -- -----------------------------------------------------------------------------------
 -- | Extract the default 'Schema' for a type
 theSchema :: forall a . HasSchema a => Schema
-theSchema = extractSchema (schema @a)
+theSchema = case extractSchema (schema @a) of x :| _ -> x
 
 validatorsFor :: forall a . HasSchema a => Validators
 validatorsFor = extractValidators (schema @a)
@@ -163,17 +169,13 @@ encode = encodeWith schema
 encodeTo :: HasSchema a => Schema -> Either [(Trace, Mismatch)] (a -> Value)
 encodeTo = encodeToWith schema
 
--- | Encode a value into a finite representation by enforcing a max depth
-finiteEncode :: forall a. HasSchema a => Natural -> a -> Value
-finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
-
 -- | Decode using the default schema.
 decode :: HasSchema a => Value -> Either [(Trace, DecodeError)] a
 decode = decodeWith schema
 
 -- | Apply `isSubtypeOf` to construct a coercion from the source schema to the default schema,
 --   apply the coercion to the data, and attempt to decode using the default schema.
-decodeFrom :: HasSchema a => Schema -> Maybe (Value -> Either [(Trace, DecodeError)] a)
+decodeFrom :: HasSchema a => Schema -> Either [(Trace, DecodeError)] (Value -> Either [(Trace, DecodeError)] a)
 decodeFrom = decodeFromWith schema
 
 -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'

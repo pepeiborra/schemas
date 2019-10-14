@@ -18,12 +18,13 @@ data Person3 = Person3
   , addresses :: [String]
   , spouse    :: Maybe Person3
   , religion  :: Maybe Religion
-  , education :: Education
+  , education :: [Education]
   }
   deriving (Eq, Show)
 
 instance HasSchema Person3 where
-  schema = record
+  schema  = named "Person3"
+          $ record
           $ Person3 <$> field "name" Person3.name
                     <*> field "age" Person3.age
                     <*> field "addresses" Person3.addresses
@@ -40,12 +41,12 @@ pepe3 = Person3
   ["2 Edward Square", "La Mar 10"]
   (Just laura3)
   Nothing
-  (PhD "Computer Science")
+  [PhD "Computer Science", Degree "Engineering"]
 
 -- laura3 has a cycle with pepe3
 laura3 = pepe3  { name      = "Laura"
                 , spouse    = Just pepe3
-                , education = Degree "English"
+                , education = [Degree "English"]
                 , addresses = ["2 Edward Square"]
                 , religion  = Just Catholic
                 }
