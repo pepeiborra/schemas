@@ -104,7 +104,6 @@ module Schemas
   , Mismatch(..)
   , Trace
   , isSubtypeOf
-  , versions
   , coerce
   , finite
   , validate

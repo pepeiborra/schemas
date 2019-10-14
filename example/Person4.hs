@@ -18,7 +18,7 @@ data Person4 = Person4
   , addresses :: [String]
   , religion  :: Maybe Religion
   , education :: [Education]
-  , a1,a2,a3,a4,a5 ,a6,a7,a8,a9,a10
+  , a1,a2,a3 -- ,a4,a5 ,a6,a7,a8,a9,a10
 --  , b1,b2,b3,b4,b5,b6,b7,b8,b9,b10
   -- , c1,c2,c3,c4,c5,c6,c7,c8,c9,c10
   -- , d1,d2,d3,d4,d5,d6,d7,d8,d9,d10
@@ -40,13 +40,13 @@ instance HasSchema Person4 where
       <*> grab "a1"  a1
       <*> grab "a2"  a2
       <*> grab "a3"  a3
-      <*> grab "a4"  a4
-      <*> grab "a5"  a5
-      <*> grab "a6"  a6
-      <*> grab "a7"  a7
-      <*> grab "a8"  a8
-      <*> grab "a9"  a9
-      <*> grab "a10" a10
+      -- <*> grab "a4"  a4
+      -- <*> grab "a5"  a5
+      -- <*> grab "a6"  a6
+      -- <*> grab "a7"  a7
+      -- <*> grab "a8"  a8
+      -- <*> grab "a9"  a9
+      -- <*> grab "a10" a10
       -- <*> grab "b1"  b1
       -- <*> grab "b2"  b2
       -- <*> grab "b3"  b3
@@ -89,13 +89,13 @@ pepe4 = Person4
   False
   False
   False
-  False
-  False
-  False
-  False
-  False
-  False
-  False
+  -- False
+  -- False
+  -- False
+  -- False
+  -- False
+  -- False
+  -- False
   -- False
   -- False
   -- False

@@ -50,7 +50,6 @@ data Schema
   | StringMap Schema
   | Enum   (NonEmpty Text)
   | Record (HashMap Text Field)
-  | AllOf (NonEmpty Schema)   -- ^ Encoding and decoding work for all alternatives
   | OneOf (NonEmpty Schema)   -- ^ Decoding works for all alternatives, encoding only for one
   | Prim Text                 -- ^ Carries the name of primitive type
   deriving (Eq, Generic, Show)
@@ -59,9 +58,9 @@ instance Monoid Schema where mempty = Empty
 instance Semigroup Schema where
   Empty <> x    = x
   x <> Empty    = x
-  AllOf aa <> b = AllOf (aa <> [b])
-  b <> AllOf aa = AllOf ([b] <> aa)
-  a <> b        = AllOf [a,b]
+  OneOf aa <> b = OneOf (aa <> [b])
+  b <> OneOf aa = OneOf ([b] <> aa)
+  a <> b        = OneOf [a,b]
 
 data Field = Field
   { fieldSchema :: Schema
@@ -121,7 +120,6 @@ finite = go
     (Map.toList opts)
   go d (Array     sc  ) = Array (go (max 0 (pred d)) sc)
   go d (StringMap sc  ) = StringMap (go (max 0 (pred d)) sc)
-  go d (AllOf     opts) = let d' = max 0 (pred d) in AllOf (finite d' <$> opts)
   go d (OneOf     opts) = let d' = max 0 (pred d) in OneOf (finite d' <$> opts)
   go _ other            = other
 
@@ -130,18 +128,6 @@ finiteValue :: Validators -> Natural -> Schema -> Value -> Value
 finiteValue validators d sc
   | Right cast <- isSubtypeOf validators sc (finite d sc) = cast
   | otherwise = error "bug in isSubtypeOf"
-
--- ------------------------------------------------------------------------------------------------------
--- Versions
-
--- | Flattens alternatives. Returns a schema without 'AllOf' constructors
-versions :: Schema -> NonEmpty Schema
-versions (AllOf scc) = join $ traverse versions scc
-versions (OneOf scc) = OneOf <$> traverse versions scc
-versions (Record fields) = Record <$> ((traverse . fieldSchemaL) versions fields)
-versions (Array sc) = Array <$> versions sc
-versions (StringMap sc) = StringMap <$> versions sc
-versions x = [x]
 
 -- ------------------------------------------------------------------------------------------------------
 -- Validation
@@ -210,7 +196,6 @@ validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept
           (toList scc)
       )
       alts
-  go ctx (AllOf scc) v = go ctx (OneOf scc) v
   go ctx a           b = failWith ctx (ValueMismatch a b)
 
 -- ------------------------------------------------------------------------------------------------------
@@ -269,20 +254,6 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
           witness <- go (n' : ctx) sc sc'
           pure $ over (_Object . ix n') witness
     return (foldr (.) id ff)
-  go ctx (AllOf sup) sub = do
-    (i, c) <- msum $ imap (\i sup' -> (i,) <$> go ( tag i : ctx) sup' sub) sup
-    return $ \v -> A.object [(tag i, c v)]
-  go ctx sup (AllOf scc) = asum
-    [ go ctx sup b <&> \f ->
-        fromMaybe
-            (  error
-            $  "failed to upcast an AllOf value due to missing entry: "
-            <> field
-            )
-          . preview (_Object . ix (pack field) . to f)
-    | (i, b) <- zip [(1 :: Int) ..] (NE.toList scc)
-    , let field = "#" <> show i
-    ]
   go ctx sup (OneOf [sub]) = go ctx sup sub
   go ctx sup (OneOf sub  ) = do
     alts <- traverse (\sc -> (sc, ) <$> go ctx sup sc) sub
@@ -317,11 +288,6 @@ decodeAlternatives obj@(A.Object x) =
       []    -> [(obj, 0)]
       other -> other
 decodeAlternatives x = [(x,0)]
-
-encodeAlternatives :: NonEmpty Value -> Value
-encodeAlternatives [x] = x
-encodeAlternatives xx  = A.object $ fromList [ (tag i, x) | (i,x) <- zip [(1::Int)..] (toList xx) ]
-
 -- | Generalized lookup for Foldables
 lookup :: (Eq a, Foldable f) => a -> f (a,b) -> Maybe b
 lookup a = fmap snd . find ((== a) . fst)

@@ -238,19 +238,19 @@ optFieldEitherWith
 optFieldEitherWith schema n e = optFieldGeneral schema n (Left e)
 
 -- | Extract all the field groups (from alternatives) in the record
-extractFields :: RecordFields from a -> NonDet [(Text, Field)]
-extractFields = extractFieldsHelper (pure . extractField)
+extractFields :: RecordFields from a -> [ [(Text, Field)] ]
+extractFields = extractFieldsHelper extractField
   where
-    extractField :: RecordField from a -> (Text, Field)
-    extractField (RequiredAp n sc) = (n,) . (`Field` True) $ extractSchema sc
-    extractField (OptionalAp n sc _) = (n,) . (`Field` False) $ extractSchema sc
+    extractField :: RecordField from a -> [(Text, Field)]
+    extractField (RequiredAp n sc) = (n,) . (`Field` True) <$> NE.toList (extractSchema sc)
+    extractField (OptionalAp n sc _) = (n,) . (`Field` False) <$> NE.toList (extractSchema sc)
 
 newtype NonDet a = NonDet { nonDet :: [a] }
   deriving newtype (Applicative, Alternative, Foldable, Functor, Monad)
 
 instance Traversable NonDet where traverse f (NonDet a) = NonDet <$> traverse f a
 
-extractFieldsHelper :: (forall a . RecordField from a -> NonDet b) -> RecordFields from a -> NonDet [b]
+extractFieldsHelper :: Alternative f => (forall a . RecordField from a -> f b) -> RecordFields from a -> f [b]
 extractFieldsHelper f = runAlt_ (\x -> (:[]) <$> f x) . getRecordFields
 
 -- --------------------------------------------------------------------------------
@@ -296,16 +296,16 @@ union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism c p sc)
 -- Schema extraction from a TypedSchema
 
 -- | Extract an untyped schema that can be serialized
-extractSchema :: TypedSchemaFlex from a -> Schema
-extractSchema (TPrim n _ _)    = Prim n
+extractSchema :: TypedSchemaFlex from a -> NonEmpty Schema
+extractSchema (TPrim n _ _)    = pure $ Prim n
 extractSchema (TTry _ sc _)    = extractSchema sc
-extractSchema (TOneOf scc)     = OneOf $ extractSchema <$> scc
-extractSchema (TAllOf scc)     = AllOf $ extractSchema <$> scc
-extractSchema TEmpty{}         = Empty
-extractSchema (TEnum opts  _)  = Enum (fst <$> opts)
-extractSchema (TArray sc _ _)  = Array $ extractSchema sc
-extractSchema (TMap sc _ _)    = StringMap $ extractSchema sc
-extractSchema (RecordSchema rs) = foldMap (Record . fromList) $ extractFields rs
+extractSchema (TOneOf scc)     = pure $ OneOf $ extractSchema =<< scc
+extractSchema (TAllOf scc)     = extractSchema =<< scc
+extractSchema TEmpty{}         = pure Empty
+extractSchema (TEnum opts  _)  = pure $ Enum (fst <$> opts)
+extractSchema (TArray sc _ _)  = Array <$> extractSchema sc
+extractSchema (TMap sc _ _)    = StringMap <$> extractSchema sc
+extractSchema (RecordSchema rs) = pure $ foldMap (Record . fromList) (extractFields rs)
 
 -- | Returns all the primitive validators embedded in this typed schema
 extractValidators :: TypedSchemaFlex from a -> Validators
@@ -333,34 +333,7 @@ type E = [(Trace, Mismatch)]
 
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
-  -- TODO Better error messages to help debug partial schemas ?
-encodeWith sc = either (throw . AllAlternativesFailed . map ([],)) id . runExcept . go sc where
-  go :: TypedSchemaFlex from a -> from -> Except [Mismatch] Value
-  go (TAllOf scc       ) x = encodeAlternatives <$> traverse (`go` x) scc
-  go (TOneOf scc       ) x = asum (fmap (`go` x) scc)
-  go (TTry n sc try    ) x = go sc =<< maybe (throwE [TryFailed n]) pure (try x)
-  go (TEnum _ fromf    ) b = pure $ A.String (fromf b)
-  go (TPrim _ _ fromf  ) b = pure $ fromf b
-  go (TEmpty _         ) _ = pure emptyValue
-  go (TArray sc _ fromf) b = A.Array <$> go sc `traverse` fromf b
-  go (TMap   sc _ fromf) b = A.Object <$> go sc `traverse` fromf b
-  go (RecordSchema rec ) x = do
-    let alternatives = extractFieldsHelper (pure . extractField x) rec
-    let results =
-          partitionEithers $ nonDet $ fmap (runExcept . sequenceA) alternatives
-    case results of
-      (_, NE.nonEmpty -> Just alts') -> pure $ encodeAlternatives $ fmap
-        (A.Object . fromList . catMaybes)
-        alts'
-      (ee, _) -> throwE (concat ee)
-   where
-
-    extractField b RequiredAp {..} =
-      Just . (fieldName, ) <$> go fieldTypedSchema b `catchE` \mm ->
-        throwE [InvalidRecordField fieldName (map ([],) mm)]
-    extractField b OptionalAp {..} =
-      (Just . (fieldName, ) <$> go fieldTypedSchema b)
-        `catchE` \_ -> pure Nothing
+encodeWith sc = fromRight (error "Internal error") $ encodeToWith sc (NE.head $ extractSchema sc)
 
 encodeToWith :: TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
 encodeToWith sc target =
@@ -393,7 +366,6 @@ encodeToWith sc target =
     case NE.nonEmpty $ NE.filter (`notElem` optsTarget) (fst <$> opts) of
       Nothing -> pure $ pure . A.String . fromf
       Just xx -> failWith ctx $ MissingEnumChoices xx
-  go ctx _ AllOf{} = failWith ctx UnexpectedAllOf
   go ctx (TAllOf scc) t = asum $ imap (\i sc -> go (tag i : ctx) sc t) scc
   go ctx (TOneOf scc) t = do
     alts <- itraverse (\i sc -> go (tag i : ctx) sc t) scc
@@ -442,7 +414,7 @@ encodeToWith sc target =
     f <- go ctx sc t
     return $ A.Array . fromList . (: []) <.> f
   go _tx _     Empty = pure $ pure . const emptyValue
-  go ctx other tgt   = failWith ctx (SchemaMismatch (extractSchema other) tgt)
+  go ctx other tgt   = failWith ctx (SchemaMismatch (NE.head $ extractSchema other) tgt)
 
 
 -- --------------------------------------------------------------------------
@@ -499,13 +471,8 @@ decodeWith sc = runExcept . go [] sc
     tof <$> traverse (go ("[]" : ctx) sc) x
   go ctx (TMap sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
   go _tx (TEmpty a) _ = pure a
-  go ctx (RecordSchema rec) o@A.Object{} = do
-    let alts = decodeAlternatives o
-    asum $ concatMap
-      (\(A.Object alts, _encodedPath) ->
-          getCompose $ runAlt (Compose . (: []) . f alts) (getRecordFields rec)
-      )
-      alts
+  go ctx (RecordSchema rec) (A.Object o) =
+       asum $ getCompose $ runAlt (Compose . (: []) . f o) (getRecordFields rec)
    where
     f :: A.Object -> RecordField from a -> Except [(Trace, DecodeError)] a
     f alts (RequiredAp n sc) = case Map.lookup n alts of
@@ -517,24 +484,18 @@ decodeWith sc = runExcept . go [] sc
       Just v  -> go (fieldName : ctx) fieldTypedSchema v
       Nothing -> pure fieldDefValue
 
-  -- The TAllOf case is probably wrong. I suspect TAllOf should decode very much like TOneOf
-  go ctx (TAllOf scc) v = asum $ map
-    (\(v', i) -> go
-      (pack (show i) : ctx)
-      (fromMaybe (error "TAllOf") $ selectPath i (NE.toList scc))
-      v'
-    )
-    (decodeAlternatives v)
+  go ctx (TAllOf scc) x = asum [ go ctx sc x | sc <- NE.toList scc ]
+  
   go ctx (TOneOf scc ) x = asum [ go ctx sc x | sc <- NE.toList scc ]
 
   go ctx (TPrim n tof _) x = case tof x of
     A.Error   e -> failWith ctx (PrimError n (pack e))
     A.Success a -> pure a
   go ctx (TTry _ sc _try) x = go ctx sc x
-  go ctx s              x = failWith ctx (ValueMismatch (extractSchema s) x)
+  go ctx s              x = failWith ctx (ValueMismatch (NE.head $ extractSchema s) x)
 
 decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either [(Trace, DecodeError)] a)
-decodeFromWith sc source = case isSubtypeOf (extractValidators sc) source (extractSchema sc) of
+decodeFromWith sc source = case isSubtypeOf (extractValidators sc) source (NE.head $ extractSchema sc) of
   Right cast -> Just $ decodeWith sc . cast
   _          -> Nothing
 

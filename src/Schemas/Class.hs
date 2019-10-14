@@ -16,6 +16,7 @@ import           Data.HashMap.Strict  (HashMap)
 import qualified Data.HashMap.Strict  as Map
 import           Data.HashSet         (HashSet)
 import           Data.List.NonEmpty   (NonEmpty (..))
+import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
 import           Data.Scientific
 import           Data.Text            (Text, pack, unpack)
@@ -84,7 +85,6 @@ instance HasSchema Schema where
     , alt "Enum"      $ prism' Enum (\case Enum x -> Just x ; _ -> Nothing)
     , alt "Record"    $ prism' Record (\case Record x -> Just x ; _ -> Nothing)
     , alt "Empty"      _Empty
-    , alt "AllOf"     $ prism' AllOf (\case AllOf x -> Just x ; _ -> Nothing)
     , alt "Prim"      $ prism' Prim (\case Prim x -> Just x ; _ -> Nothing)
     , altWith unionSchema "Union" _Union
     , alt "OneOf"     $ prism' OneOf (\case OneOf x -> Just x ; _ -> Nothing)
@@ -148,7 +148,7 @@ instance Key String where
 -- -----------------------------------------------------------------------------------
 -- | Extract the default 'Schema' for a type
 theSchema :: forall a . HasSchema a => Schema
-theSchema = extractSchema (schema @a)
+theSchema = NE.head $ extractSchema (schema @a)
 
 validatorsFor :: forall a . HasSchema a => Validators
 validatorsFor = extractValidators (schema @a)

@@ -44,17 +44,13 @@ spec = do
         encoder `shouldSatisfy` isRight
         spec    `shouldSatisfy` isJust
         fromRight undefined encoder pepe `shouldBe` fromJust spec pepe
-  describe "versions" $ do
-    prop "eliminates AllOf" $ \sc -> all (not . hasAllOf) (versions sc)
   describe "finite" $ do
     it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       sc `shouldBeSubtypeOf` sc
-    it "is reflexive (corner  case)" $
-      finiteCornerCase `shouldBeSubtypeOf` finiteCornerCase
     it "always produces a supertype (in absence of OneOf)" $
       forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       forAll arbitrary $ \(SmallNatural size) ->
-      all (\sc -> isRight $ isSubtypeOf primValidators sc (finite size sc)) (versions sc)
+      isRight $ isSubtypeOf primValidators sc (finite size sc)
   describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
       Record [makeField "a" prim True, makeField "def" prim True]
@@ -96,9 +92,9 @@ spec = do
     it "left is a constructor of Either too" $ do
       Union [constructor' "left" Empty] `shouldBeSubtypeOf` theSchema @(Either () ())
   describe "examples" $ do
-    let   person4_v0 = NE.head $ versions $ theSchema @Person4
-          person2_v0 = NE.head $ versions $ theSchema @Person2
-          person3_v0 = NE.head $ versions $ theSchema @Person3
+    let   person4_v0 = theSchema @Person4
+          person2_v0 = theSchema @Person2
+          person3_v0 = theSchema @Person3
           person4_vPerson2 = person2_v0
           person4_vPerson3 = person3_v0
           encoder_p4v0 = encodeTo person4_v0
@@ -178,7 +174,7 @@ spec = do
         res `shouldBe` Right pepe4
 
 encodeToWithSpec :: TypedSchema a -> Schema -> Maybe (a -> A.Value)
-encodeToWithSpec sc target = case isSubtypeOf (extractValidators sc) (extractSchema sc) target of
+encodeToWithSpec sc target = case isSubtypeOf (extractValidators sc) (NE.head $ extractSchema sc) target of
   Right cast -> Just $ cast . encodeWith sc
   _ -> Nothing
 
@@ -216,6 +212,3 @@ prim = Prim "A"
 
 primValidators :: Validators
 primValidators = validatorsFor @(Schema, Double, Int, Bool)
-
-finiteCornerCase :: Schema
-finiteCornerCase = AllOf [ Array $ Prim "A"]

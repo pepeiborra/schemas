@@ -5,6 +5,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedLists            #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 -- | This module defines a 'TypedSchema' for the 'Schema' datatype,
 --   inspired in the OpenApi 2.0 specification, which may be useful
@@ -158,7 +159,6 @@ toOpenApi2 prim (Union alts) = do
     }
 toOpenApi2 prim (Prim p) | Just y <- prim p = pure y
 toOpenApi2 _rim (Prim p) = lift $ throwE $ Unsupported $ "Unknown prim: " <> p
-toOpenApi2 _rim AllOf{} = lift $ throwE $ Unsupported "alternatives (AllOf)"
 toOpenApi2 _rim OneOf{} =
   lift $ throwE $ Unsupported "undiscriminated unions (OneOf)"
 
