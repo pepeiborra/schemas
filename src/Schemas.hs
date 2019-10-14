@@ -87,14 +87,14 @@ module Schemas
   , decodeWith
   , encodeToWith
   , decodeFromWith
-  , DecodeError(..)
+  , DecodeError
+
   -- * working with recursive schemas
-  , finiteValue
-  , finiteEncode
+  , named
 
   -- * Untyped schemas
   , Schema(.., Empty, Union)
-  ,  Field(..)
+  , Field(..)
   , _Empty
   , _Union
   -- ** Extraction
@@ -104,9 +104,7 @@ module Schemas
   , Mismatch(..)
   , Trace
   , isSubtypeOf
-  , versions
   , coerce
-  , finite
   , validate
   , validatorsFor
   -- * Reexports

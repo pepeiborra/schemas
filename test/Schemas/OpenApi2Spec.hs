@@ -18,7 +18,7 @@ spec = do
       let document = toOpenApi2Document defaultOptions [("Person", theSchema @Person)]
       Map.keys (definitions document) `shouldContain` ["Person"]
       Map.keys (failures document) `shouldNotContain` ["Person"]
-    it "does Nothing for Person2" $ do
+    it "works for Person2" $ do
       let document = toOpenApi2Document defaultOptions [("Person2", theSchema @Person2)]
-      Map.keys (definitions document) `shouldNotContain` ["Person2"]
-      Map.keys (failures document) `shouldContain` ["Person2"]
+      Map.keys (definitions document) `shouldContain` ["Person2"]
+      Map.keys (failures document) `shouldNotContain` ["Person2"]

@@ -5,6 +5,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedLists            #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 -- | This module defines a 'TypedSchema' for the 'Schema' datatype,
 --   inspired in the OpenApi 2.0 specification, which may be useful
@@ -37,7 +38,7 @@ import           GHC.Generics
 import           Schemas
 import           Schemas.SOP
 
--- | Given a schema free of undiscriminated unions and alternatives,
+-- | Given a schema free of undiscriminated unions
 --   @encodeAsOpenApi2Document name schema@ produces an encoding of an
 --   OpenApi2 document that models the given schema.
 --   Failures are omitted, use 'toOpenApi2Document' if you care.
@@ -158,7 +159,6 @@ toOpenApi2 prim (Union alts) = do
     }
 toOpenApi2 prim (Prim p) | Just y <- prim p = pure y
 toOpenApi2 _rim (Prim p) = lift $ throwE $ Unsupported $ "Unknown prim: " <> p
-toOpenApi2 _rim AllOf{} = lift $ throwE $ Unsupported "alternatives (AllOf)"
 toOpenApi2 _rim OneOf{} =
   lift $ throwE $ Unsupported "undiscriminated unions (OneOf)"
 
