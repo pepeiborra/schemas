@@ -308,7 +308,7 @@ extractSchema TEmpty{}         = pure Empty
 extractSchema (TEnum opts  _)  = pure $ Enum (fst <$> opts)
 extractSchema (TArray sc _ _)  = Array <$> extractSchema sc
 extractSchema (TMap sc _ _)    = StringMap <$> extractSchema sc
-extractSchema (RecordSchema rs) = pure $ foldMap (Record . fromList) (extractFields rs)
+extractSchema (RecordSchema rs) = fromList $ foldMap (pure . Record . fromList) (extractFields rs)
 
 -- | Returns all the primitive validators embedded in this typed schema
 extractValidators :: TypedSchemaFlex from a -> Validators
@@ -337,7 +337,7 @@ type E = [(Trace, Mismatch)]
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
 encodeWith sc =
-  fromRight (error "Internal error") $ encodeToWith sc (finite 100 $ NE.head $ extractSchema sc)
+  fromRight (error "Internal error") $ encodeToWith sc (NE.head $ extractSchema sc)
 
 encodeToWith :: TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
 encodeToWith sc target = (\m -> either (throw . AllAlternativesFailed) id . runExcept . m) <$> runExcept (go [] sc target)

@@ -38,7 +38,7 @@ import           GHC.Generics
 import           Schemas
 import           Schemas.SOP
 
--- | Given a schema free of undiscriminated unions and alternatives,
+-- | Given a schema free of undiscriminated unions
 --   @encodeAsOpenApi2Document name schema@ produces an encoding of an
 --   OpenApi2 document that models the given schema.
 --   Failures are omitted, use 'toOpenApi2Document' if you care.
