@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
@@ -21,6 +23,7 @@ import           Control.Monad.Trans.Except
 import           Data.Aeson                 (Value)
 import qualified Data.Aeson                 as A
 import           Data.Biapplicative
+import           Data.Coerce
 import           Data.Either
 import           Data.Foldable              (asum)
 import           Data.Functor.Compose
@@ -333,12 +336,11 @@ type E = [(Trace, Mismatch)]
 
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
 encodeWith :: TypedSchemaFlex from a -> from -> Value
-encodeWith sc = fromRight (error "Internal error") $ encodeToWith sc (NE.head $ extractSchema sc)
+encodeWith sc =
+  fromRight (error "Internal error") $ encodeToWith sc (finite 100 $ NE.head $ extractSchema sc)
 
 encodeToWith :: TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
-encodeToWith sc target =
-  (\m -> either (throw . AllAlternativesFailed) id . runExcept . m)
-    <$> runExcept (go [] sc target)
+encodeToWith sc target = (\m -> either (throw . AllAlternativesFailed) id . runExcept . m) <$> runExcept (go [] sc target)
  where
   failWith ctx m = throwE [(reverse ctx, m)]
 
@@ -414,14 +416,16 @@ encodeToWith sc target =
     f <- go ctx sc t
     return $ A.Array . fromList . (: []) <.> f
   go _tx _     Empty = pure $ pure . const emptyValue
-  go ctx other tgt   = failWith ctx (SchemaMismatch (NE.head $ extractSchema other) tgt)
-
+  go ctx other src   = failWith ctx (SchemaMismatch (NE.head $ extractSchema other) src)
 
 -- --------------------------------------------------------------------------
 -- Decoding
 
+type D = [(Trace, DecodeError)]
+
 data DecodeError
   = DecodeError Mismatch
+  | UnusedFields [[Text]]
   | TriedAndFailed
   deriving (Eq, Show)
 
@@ -452,52 +456,87 @@ runSchema sc = runExcept . go sc
         failWith e = throwE [DecodeError e]
 
 -- | Given a JSON 'Value' and a typed schema, extract a Haskell value
-decodeWith :: TypedSchemaFlex from a -> Value -> Either [(Trace, DecodeError)] a
--- TODO merge runSchema and decodeWith ?
--- TODO change decode type to reflect partiality due to TTry _?
-decodeWith sc = runExcept . go [] sc
+decodeWith :: TypedSchemaFlex from a -> Value -> Either D a
+decodeWith sc v = decoder >>= ($ v)
  where
-  failWith ctx e = throwE [(reverse ctx, DecodeError e)]
+   decoder = decodeFromWith sc (NE.head $ extractSchema sc)
 
-  go
-    :: [Text]
-    -> TypedSchemaFlex from a
-    -> Value
-    -> Except [(Trace, DecodeError)] a
-  go ctx (TEnum opts _) (A.String x) =
-    maybe (failWith ctx (InvalidEnumValue x (fst <$> opts))) pure
-      $ lookup x opts
-  go ctx (TArray sc tof _) (A.Array x) =
-    tof <$> traverse (go ("[]" : ctx) sc) x
-  go ctx (TMap sc tof _) (A.Object x) = tof <$> traverse (go ("[]" : ctx) sc) x
-  go _tx (TEmpty a) _ = pure a
-  go ctx (RecordSchema rec) (A.Object o) =
-       asum $ getCompose $ runAlt (Compose . (: []) . f o) (getRecordFields rec)
-   where
-    f :: A.Object -> RecordField from a -> Except [(Trace, DecodeError)] a
-    f alts (RequiredAp n sc) = case Map.lookup n alts of
-      Just v  -> go (n : ctx) sc v
-      Nothing -> case sc of
---         TArray _ tof' _ -> pure $ tof' []
-        _               -> failWith ctx (MissingRecordField n)
-    f alts OptionalAp {..} = case Map.lookup fieldName alts of
-      Just v  -> go (fieldName : ctx) fieldTypedSchema v
-      Nothing -> pure fieldDefValue
+decodeFromWith :: TypedSchemaFlex from a -> Schema -> Either D (Value -> Either D a)
+-- TODO merge runSchema and decodeFromWith ?
+decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc source)
+  where
+    failWith ctx e = throwE [(reverse ctx, DecodeError e)]
 
-  go ctx (TAllOf scc) x = asum [ go ctx sc x | sc <- NE.toList scc ]
-  
-  go ctx (TOneOf scc ) x = asum [ go ctx sc x | sc <- NE.toList scc ]
+    go :: Trace -> TypedSchemaFlex from a -> Schema -> Except D (Value -> Except D a)
+    go _tx (TEmpty a) _ = pure $ const $ pure a
+    go ctx (TEnum optsTarget _) s@(Enum optsSource) =
+      case NE.nonEmpty $ NE.filter (`notElem` map fst (NE.toList optsTarget)) (optsSource) of
+        Just xx -> failWith ctx $ MissingEnumChoices xx
+        Nothing -> pure $ \case
+          A.String x -> maybe (failWith ctx (InvalidEnumValue x (fst <$> optsTarget))) pure $ lookup x optsTarget
+          other -> failWith ctx (ValueMismatch s other)
+    go ctx (TArray sc tof _) s@(Array src) = do
+      f <- go ("[]" : ctx) sc src
+      return $ \case
+        A.Array x -> tof <$> traverse f x
+        other -> failWith ctx (ValueMismatch s other)
+    go ctx (TMap sc tof _) s@(StringMap src) = do
+      f <- go ("Map" : ctx) sc src
+      return $ \case
+        A.Object x -> tof <$> traverse f x
+        other -> failWith ctx (ValueMismatch s other)
+    go ctx (TPrim n tof _) (Prim src)
+      | n /= src = failWith ctx (PrimMismatch n src)
+      | otherwise = return $ \x -> case tof x of
+          A.Error   e -> failWith ctx (PrimError n (pack e))
+          A.Success a -> return a
+    go ctx (TTry n sc _try) x = go (n : ctx) sc x
+    go ctx (TAllOf scc) src = do
+      let parsers = mapMaybe (\sc -> either (const Nothing) Just $ runExcept $ go ctx sc src) (NE.toList scc)
+      return $ \x -> asum (map ($x) parsers)
+    go ctx (TOneOf scc) src = do
+      let parsers = mapMaybe (\sc -> either (const Nothing) Just $ runExcept $ go ctx sc src) (NE.toList scc)
+      return $ \x -> asum (map ($x) parsers)
+    go ctx (RecordSchema (RecordFields rec)) (Record src) = do
+      let solutions = nonDet $ coerce $ runAlt f' rec
+      -- make sure there are no unused fields
+          sourceFields = Map.keys src
+          valid = map (\(tgtFields, f) -> case Set.difference (fromList sourceFields) (fromList tgtFields) of
+                          [] -> Right f
+                          xx -> Left (Set.toList xx)
+                      ) solutions
+      case partitionEithers valid of
+        (ee, []) -> throwE [(reverse ctx, UnusedFields ee)]
+        (_ , alts) -> pure $ \x -> asum $ fmap ($ x) alts
+     where
+          f' :: RecordField from a -> (NonDet `Compose` (,) [Text] `Compose` (->) Value `Compose` (Except D)) a
+          f' x = coerce (f x)
+          f :: RecordField from a -> NonDet ([Text], Value -> Except D a) -- ReaderT Value (Except D) a
+          f RequiredAp{..} =
+            case Map.lookup fieldName src of
+              Nothing -> empty
+              Just srcField -> do
+                guard $ isRequired srcField
+                case runExcept $ go (fieldName:ctx) fieldTypedSchema (fieldSchema srcField) of
+                  Left  _ -> empty
+                  Right f -> return ([fieldName], \case
+                    A.Object o -> case Map.lookup fieldName o of
+                      Nothing -> failWith (fieldName:ctx) (MissingRecordField fieldName)
+                      Just v  -> f v)
+          f OptionalAp{..} =
+            case Map.lookup fieldName src of
+              Nothing -> return ([fieldName], const $ return fieldDefValue)
+              Just srcField -> do
+                case runExcept $ go (fieldName:ctx) fieldTypedSchema (fieldSchema srcField) of
+                  Left  _ -> empty
+                  Right f -> return ([fieldName], \case
+                    A.Object o -> case Map.lookup fieldName o of
+                      Nothing -> return fieldDefValue
+                      Just v  -> f v)
 
-  go ctx (TPrim n tof _) x = case tof x of
-    A.Error   e -> failWith ctx (PrimError n (pack e))
-    A.Success a -> pure a
-  go ctx (TTry _ sc _try) x = go ctx sc x
-  go ctx s              x = failWith ctx (ValueMismatch (NE.head $ extractSchema s) x)
+    go ctx s     (OneOf xx) = asum $ fmap (go ctx s) xx
+    go ctx s            src = failWith ctx (SchemaMismatch (NE.head $ extractSchema s) src)
 
-decodeFromWith :: TypedSchema a -> Schema -> Maybe (Value -> Either [(Trace, DecodeError)] a)
-decodeFromWith sc source = case isSubtypeOf (extractValidators sc) source (NE.head $ extractSchema sc) of
-  Right cast -> Just $ decodeWith sc . cast
-  _          -> Nothing
 
 -- ----------------------------------------------
 -- Utils

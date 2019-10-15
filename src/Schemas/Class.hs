@@ -173,7 +173,7 @@ decode = decodeWith schema
 
 -- | Apply `isSubtypeOf` to construct a coercion from the source schema to the default schema,
 --   apply the coercion to the data, and attempt to decode using the default schema.
-decodeFrom :: HasSchema a => Schema -> Maybe (Value -> Either [(Trace, DecodeError)] a)
+decodeFrom :: HasSchema a => Schema -> Either [(Trace, DecodeError)] (Value -> Either [(Trace, DecodeError)] a)
 decodeFrom = decodeFromWith schema
 
 -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
