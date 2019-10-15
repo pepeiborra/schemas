@@ -6,10 +6,13 @@
 module SchemasSpec where
 
 import Control.Exception
-import Control.Monad
+import Control.Monad.Trans.Except
 import qualified Data.Aeson as A
+import Data.Coerce
 import Data.Either
 import qualified Data.List.NonEmpty as NE
+import Data.Foldable
+import Data.Functor.Identity
 import Data.Maybe
 import Generators
 import Person
@@ -17,7 +20,6 @@ import Person2
 import Person3
 import Person4
 import Schemas
-import Schemas.Internal
 import Schemas.Untyped (Validators)
 import System.Timeout
 import Test.Hspec
@@ -84,9 +86,9 @@ spec = do
       Array prim `shouldNotBeSubtypeOf` prim
   describe "HasSchema" $ do
     it "Left is a constructor of Either" $ do
-      shouldBeAbleToDecode @(Either () ()) $ Union [constructor' "Left" Empty]
+      shouldBeAbleToDecode @(Either () ()) [Union [constructor' "Left" Empty]]
     it "left is a constructor of Either too" $ do
-      shouldBeAbleToDecode @(Either () ()) $ Union [constructor' "left" Empty]
+      shouldBeAbleToDecode @(Either () ()) [Union [constructor' "left" Empty]]
   describe "examples" $ do
     let   person4_v0 = theSchema @Person4
           person2_v0 = theSchema @Person2
@@ -106,7 +108,8 @@ spec = do
     describe "Person2" $ do
       schemaSpec schema pepe2
       it "Person2 < Person" $ do
-        theSchema @Person2 `shouldBeSubtypeOf`   theSchema @Person
+         shouldBeAbleToEncode @Person2 (extractSchema @Person schema)
+         -- shouldBeAbleToDecode @Person (extractSchema @Person2 schema)
       it "pepe2 `as` Person" $ do
         let encoder = encodeTo (theSchema @Person)
         encoder `shouldSatisfy` isRight
@@ -116,7 +119,8 @@ spec = do
         decoder `shouldSatisfy` isRight
         fromRight undefined decoder (encode pepe) `shouldBe` Right pepe2{Person2.education = [Person.studies pepe]}
       it "Person < Person2" $ do
-        theSchema @Person `shouldBeSubtypeOf`   theSchema @Person2
+        -- shouldBeAbleToEncode @Person  (extractSchema @Person2 schema)
+        shouldBeAbleToDecode @Person2 (extractSchema @Person schema)
     describe "Person3" $ do
       it "cannot compute an encoder for Person3 (infinite schema)" $
         shouldLoop $ evaluate encoder_p3v0
@@ -151,10 +155,6 @@ spec = do
         let res = fromRight undefined (decodeFrom person4_vPerson2) encoded_pepe2
         shouldNotLoop $ evaluate res
         res `shouldBe` Right pepe4
-      it "can decode a Person2 encoded to Person4 without source schema" $ do
-        let res = decode encoded_pepe2
-        shouldNotLoop $ evaluate res
-        res `shouldBe` Right pepe4
       it "can decode a Person2" $ do
         let res = fromRight undefined (decodeFrom person2_v0) encoded_pepe2'
             holds = res == Right pepe4
@@ -175,25 +175,6 @@ schemaSpec sc ex = do
     fromRight undefined decoder encodedExample `shouldBe` Right ex
   it "Roundtrips ex (2)" $
     decodeWith sc (encodeWith sc ex) `shouldBe` Right ex
-  it "encoder satisfies the specification" $ do
-    encoderSpecification sc ex
-
-
-encodeToWithSpec :: TypedSchema a -> Schema -> Maybe (a -> A.Value)
-encodeToWithSpec sc target = case isSubtypeOf (extractValidators sc) (NE.head $ extractSchema sc) target of
-  Right cast -> Just $ cast . encodeWith sc
-  _ -> Nothing
-
-encodeToSpec :: HasSchema a => Schema -> Maybe (a -> A.Value)
-encodeToSpec tgt = encodeToWithSpec schema tgt
-
-encoderSpecification :: TypedSchema a -> a -> Expectation
-encoderSpecification sc a = forM_ (extractSchema sc) $ \s -> do
-  let encoder = encodeToWith sc s
-      spec    = encodeToWithSpec sc s
-  encoder `shouldSatisfy` isRight
-  spec `shouldSatisfy` isJust
-  fromRight undefined encoder a `shouldBe` fromJust spec a
 
 shouldBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldBeSubtypeOf a b = case isSubtypeOf primValidators a b of
@@ -215,8 +196,17 @@ shouldNotLoop act = do
   res <- timeout 1000000 act
   res `shouldSatisfy` isJust
 
-shouldBeAbleToDecode :: forall a . HasSchema a => Schema -> Expectation
-shouldBeAbleToDecode sc = decodeFrom @a sc `shouldSatisfy` isRight
+shouldBeAbleToEncode :: forall a . (HasSchema a) => NE.NonEmpty Schema -> Expectation
+shouldBeAbleToEncode sc = asumEither (fmap (encodeTo @a) sc) `shouldSatisfy` isRight
+
+shouldBeAbleToDecode :: forall a . (HasSchema a) => NE.NonEmpty Schema -> Expectation
+shouldBeAbleToDecode sc = asumEither (fmap (decodeFrom @a) sc) `shouldSatisfy` isRight
+
+asumEither :: forall e a . (Monoid e) => NE.NonEmpty (Either e a) -> Either e a
+asumEither = Data.Coerce.coerce asumExcept
+  where
+    asumExcept :: NE.NonEmpty (Except e a) -> Except e a
+    asumExcept = asum
 
 makeField :: a -> Schema -> Bool -> (a, Field)
 makeField n t isReq = (n, Field t isReq)

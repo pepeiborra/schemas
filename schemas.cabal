@@ -95,4 +95,5 @@ test-suite spec
                      , QuickCheck
                      , schemas
                      , text
+                     , transformers
                      , unordered-containers
