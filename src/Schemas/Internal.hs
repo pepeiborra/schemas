@@ -66,6 +66,7 @@ data TypedSchemaFlex from a where
   TEmpty :: a -> TypedSchemaFlex from a
   TPrim  :: Text -> (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
   -- TTry _ is used to implement 'optField' on top of 'optFieldWith'
+  -- It's also crucial for implementing unions on top of TOneOf
   -- it could be exposed to provide some form of error handling, but currently is not
   TTry     :: Text -> TypedSchemaFlex a b -> (a' -> Maybe a) -> TypedSchemaFlex a' b
   RecordSchema :: RecordFields from a -> TypedSchemaFlex from a
@@ -73,6 +74,8 @@ data TypedSchemaFlex from a where
 instance Show (TypedSchemaFlex from a) where
   show (TTry n sc _) = unwords ["TTry", unpack n, show sc]
   show x = show $ extractSchema x
+
+type TypedSchema a = TypedSchemaFlex a a
 
 -- | @enum values mapping@ construct a schema for a non empty set of values with a 'Text' mapping
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
@@ -150,8 +153,6 @@ instance Semigroup (TypedSchemaFlex f a) where
   TAllOf aa <> b = allOf (aa <> [b])
   a <> TAllOf bb = allOf ([a] <> bb)
   a <> b = allOf [a,b]
-
-type TypedSchema a = TypedSchemaFlex a a
 
 -- --------------------------------------------------------------------------------
 -- Applicative records
