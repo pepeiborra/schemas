@@ -38,10 +38,9 @@
 module Schemas
  (
   -- * Typed schemas
-    TypedSchemaFlex(..)
+    TypedSchemaFlex
   , TypedSchema
   , HasSchema(..)
-  , schemaSealed
   -- ** Construction
   , enum
   , readShow

@@ -20,6 +20,7 @@ import qualified Data.List.NonEmpty       as NE
 import           Data.Maybe
 import           Data.Profunctor
 import           Data.Text                (Text, pack)
+import           Data.Typeable
 import           Generics.SOP             as SOP
 import           Schemas.Class
 import           Schemas.Internal
@@ -35,7 +36,7 @@ defOptions = Options id id
 fieldSchemaC :: Proxy FieldEncode
 fieldSchemaC = Proxy
 
-gSchema :: forall v a. (HasDatatypeInfo a, All2 FieldEncode (Code a)) => Options -> TypedSchemaMu v a
+gSchema :: forall v a. (HasDatatypeInfo a, All (All FieldEncode `And` Typeable) (Code a)) => Options -> TypedSchemaMu v a
 gSchema opts = case datatypeInfo (Proxy @a) of
     (Newtype _ _ ci       ) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
     (ADT _ _ (ci :* Nil) _) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
@@ -47,16 +48,18 @@ gRecordFields opts = case datatypeInfo (Proxy @a) of
     (ADT _ _ (ci :* Nil) _) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gRecordFields' opts ci
 
 
-gSchemaNS :: forall xss v . All2 FieldEncode xss => Options -> NP ConstructorInfo xss -> TypedSchemaMu v (NS (NP I) xss)
+gSchemaNS :: forall xss v .
+  All (All FieldEncode `And` Typeable) xss =>
+  Options -> NP ConstructorInfo xss -> TypedSchemaMu v (NS (NP I) xss)
 gSchemaNS opts =
     union
         . NE.fromList
         . hcollapse
-        . hczipWith3 (Proxy :: Proxy (All FieldEncode)) mk (injections @_ @(NP I)) (ejections  @_ @(NP I))
+        . hczipWith3 (Proxy :: Proxy (All FieldEncode `And` Typeable)) mk (injections @_ @(NP I)) (ejections  @_ @(NP I))
     where
         mk
             :: forall (xs :: [*])
-             . All FieldEncode xs
+             . (All FieldEncode xs, Typeable xs)
             => Injection (NP I) xss xs
             -> Ejection (NP I) xss xs
             -> ConstructorInfo xs
@@ -100,7 +103,7 @@ gRecordFields' opts ci =
       SNil  -> Nil
       SCons -> K no :* numbers (no + 1)
 
-class FieldEncode a where fieldEncoder :: Text -> (from -> a) -> RecordFieldsMu v from a
+class Typeable a => FieldEncode a where fieldEncoder :: Text -> (from -> a) -> RecordFieldsMu v from a
 
-instance {-# OVERLAPPABLE #-} HasSchema a => FieldEncode a where fieldEncoder = field
-instance HasSchema a => FieldEncode (Maybe a) where fieldEncoder = optField
+instance {-# OVERLAPPABLE #-} (HasSchema a, Typeable a) => FieldEncode a where fieldEncoder = field
+instance (HasSchema a, Typeable a) => FieldEncode (Maybe a) where fieldEncoder = optField

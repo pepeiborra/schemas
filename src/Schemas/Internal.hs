@@ -26,6 +26,7 @@ import           Data.Aeson                 (Value)
 import qualified Data.Aeson                 as A
 import           Data.Biapplicative
 import           Data.Coerce
+import           Data.Dynamic
 import           Data.Either
 import           Data.Foldable              (asum)
 import           Data.Function              (fix)
@@ -62,8 +63,8 @@ data TypedSchemaFlexMu v from a where
   TVar   :: v -> TypedSchemaFlexMu v from a
   TMu    :: (v -> TypedSchemaFlexMu v from a) -> TypedSchemaFlexMu v from a
   TEnum  :: (NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlexMu v from a
-  TArray :: TypedSchemaFlexMu v b b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlexMu v from a
-  TMap   :: TypedSchemaFlexMu v b b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlexMu v from a
+  TArray :: Typeable b => TypedSchemaFlexMu v b b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlexMu v from a
+  TMap   :: (Typeable b) => TypedSchemaFlexMu v b b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlexMu v from a
   -- | Encoding and decoding support all alternatives
   TAllOf :: NonEmpty (TypedSchemaFlexMu v from a) -> TypedSchemaFlexMu v from a
   -- | Decoding from all alternatives, but encoding only to one
@@ -73,16 +74,20 @@ data TypedSchemaFlexMu v from a where
   -- TTry _ is used to implement 'optField' on top of 'optFieldWith'
   -- It's also crucial for implementing unions on top of TOneOf
   -- it could be exposed to provide some form of error handling, but currently is not
-  TTry     :: Text -> TypedSchemaFlexMu v a b -> (a' -> Maybe a) -> TypedSchemaFlexMu v a' b
+  TTry     :: Typeable a => Text -> TypedSchemaFlexMu v a b -> (a' -> Maybe a) -> TypedSchemaFlexMu v a' b
   RecordSchema :: RecordFieldsMu v from a -> TypedSchemaFlexMu v from a
 
-newtype TypedSchemaFlex from a = TypedSchema {unwrap :: forall v. TypedSchemaFlexMu v from a}
+type TypedSchemaFlex from a = forall v. TypedSchemaFlexMu v from a
 
 type TypedSchemaMu v a = TypedSchemaFlexMu v a a
 type TypedSchema a = TypedSchemaFlex a a
 
-mu :: (TypedSchemaFlexMu v from1 a1 -> TypedSchemaFlexMu v from2 a2) -> TypedSchemaFlexMu v from2 a2
+mu :: (TypedSchemaFlexMu v from a -> TypedSchemaFlexMu v from a) -> TypedSchemaFlexMu v from a
 mu f = (TMu (\x -> (f (TVar x))))
+
+-- mapMu :: (v -> v') -> (v' -> v) -> TypedSchemaFlexMu v a b -> TypedSchemaFlexMu v' a b
+-- mapMu f _  (TVar v) = TVar (f v)
+-- mapMu f f' (TMu g) = TMu (mapMu f f' . g . f')
 
 -- | @enum values mapping@ construct a schema for a non empty set of values with a 'Text' mapping
 enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchemaMu v a
@@ -92,16 +97,16 @@ enum showF opts = TEnum alts (fromMaybe (error "invalid alt") . flip lookup altM
   alts   = opts <&> \x -> (showF x, x)
 
 -- | @stringMap sc@ is the schema for a stringmap where the values have schema @sc@
-stringMap :: TypedSchemaMu v a -> TypedSchemaMu v (HashMap Text a)
-stringMap (sc) = TMap sc id id
+stringMap :: Typeable a => TypedSchemaMu v a -> TypedSchemaMu v (HashMap Text a)
+stringMap sc = TMap sc id id
 
 -- | @list sc@ is the schema for a list of values with schema @sc@
-list :: IsList l => TypedSchemaMu v (Item l) -> TypedSchemaMu v l
+list :: (IsList l, Typeable (Item l)) => TypedSchemaMu v (Item l) -> TypedSchemaMu v l
 list (schema) = TArray schema (fromList . V.toList) (V.fromList . toList)
 
 -- | @vector sc@ is the schema for a vector of values with schema @sc@
-vector :: TypedSchemaMu v a -> TypedSchemaMu v (Vector a)
-vector (sc) = TArray sc id id
+vector :: Typeable a => TypedSchemaMu v a -> TypedSchemaMu v (Vector a)
+vector sc = TArray sc id id
 
 -- | @viaJson label@ constructs a schema reusing existing 'aeson' instances. The resulting schema
 --  is opaque and cannot be subtyped and/or versioned, so this constructor should be used sparingly.
@@ -129,12 +134,6 @@ oneOf x = TOneOf $ sconcat $ fmap f x where
   f (TOneOf xx) = xx
   f (x) = [x]
 
-instance Functor (TypedSchemaFlex from) where
-  fmap = rmap
-
-instance Profunctor TypedSchemaFlex where
-  dimap g f (TypedSchema x) = TypedSchema (dimap g f x) where
-
 instance Profunctor (TypedSchemaFlexMu v) where
   dimap _ _ (TVar v) = TVar v
   dimap g f (TMu  h) = TMu (dimap g f . h)
@@ -148,14 +147,11 @@ instance Profunctor (TypedSchemaFlexMu v) where
   dimap g f (TPrim       n   tof fromf) = TPrim n (fmap f . tof) (fromf . g)
   dimap g f (RecordSchema           sc) = RecordSchema (dimap g f sc)
 
-instance Monoid a => Monoid (TypedSchemaFlex f a) where
-  mempty = TypedSchema $ TEmpty mempty
-
-instance Semigroup (TypedSchemaFlex f a) where
-  -- | Allows defining multiple schemas for the same thing, effectively implementing versioning.
-  TypedSchema a <> TypedSchema b = TypedSchema (a <> b)
+instance Monoid a => Monoid (TypedSchemaFlexMu v f a) where
+  mempty = TEmpty mempty
 
 instance Semigroup (TypedSchemaFlexMu v f a) where
+  -- | Allows defining multiple schemas for the same thing, effectively implementing versioning.
   TEmpty a  <> TEmpty _  = TEmpty a
   TEmpty{}  <> x         = x
   x         <> TEmpty{}  = x
@@ -244,15 +240,15 @@ fieldWith' (schema) n = RecordFieldsMu $ liftAlt (RequiredAp n schema)
 --   When encoding/decoding a value that doesn't fit the prism,
 --   an optional field will be omitted, and a required field will cause
 --   this alternative to be aborted.
-liftPrism :: Text -> Prism s t a b -> TypedSchemaFlexMu v a b -> TypedSchemaFlexMu v s t
-liftPrism n p (sc) = withPrism p $ \t f -> rmap t (TTry n sc (either (const Nothing) Just . f))
+liftPrism :: Typeable a => Text -> Prism s t a b -> TypedSchemaFlexMu v a b -> TypedSchemaFlexMu v s t
+liftPrism n p sc = withPrism p $ \t f -> rmap t (TTry n sc (either (const Nothing) Just . f))
 
 -- | @liftJust = liftPrism _Just@
-liftJust :: TypedSchemaFlexMu v a b -> TypedSchemaFlexMu v (Maybe a) (Maybe b)
+liftJust :: Typeable a => TypedSchemaFlexMu v a b -> TypedSchemaFlexMu v (Maybe a) (Maybe b)
 liftJust = liftPrism "Just" _Just
 
 -- | @liftRight = liftPrism _Right@
-liftRight :: TypedSchemaFlexMu v a b -> TypedSchemaFlexMu v (Either c a) (Either c b)
+liftRight :: Typeable a => TypedSchemaFlexMu v a b -> TypedSchemaFlexMu v (Either c a) (Either c b)
 liftRight = liftPrism "Right" _Right
 
 -- | A generalized version of 'optField'. Does not handle infinite/circular data.
@@ -327,15 +323,15 @@ union args = TOneOf (mk <$> args)
 
 -- | Existential wrapper for convenient definition of discriminated unions
 data UnionTag v from where
-  UnionTag :: Text -> Prism' from b -> TypedSchemaMu v b -> UnionTag v from
+  UnionTag :: Typeable b => Text -> Prism' from b -> TypedSchemaMu v b -> UnionTag v from
 
 -- | @altWith name prism schema@ introduces a discriminated union alternative
-altWith :: TypedSchemaMu v a -> Text -> Prism' from a -> UnionTag v from
+altWith :: Typeable a => TypedSchemaMu v a -> Text -> Prism' from a -> UnionTag v from
 altWith sc n p = UnionTag n p sc
 
 -- | Given a non empty set of constructors, construct the schema that selects the first
 --   matching constructor
-union' :: (NonEmpty (UnionTag v from)) -> TypedSchemaMu v from
+union' :: NonEmpty (UnionTag v from) -> TypedSchemaMu v from
 union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism c p sc)
 
 -- --------------------------------------------------------------------------------
@@ -343,7 +339,7 @@ union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism c p sc)
 
 -- | Extract an untyped schema that can be serialized
 extractSchema :: TypedSchemaFlex from a -> NonEmpty Schema
-extractSchema = extractSchemaMu . unwrap
+extractSchema = extractSchemaMu
 
 extractSchemaMu :: TypedSchemaFlexMu (NonEmpty Schema) from a -> NonEmpty Schema
 extractSchemaMu (TVar v)         = v
@@ -360,7 +356,7 @@ extractSchemaMu (RecordSchema rs) = fromList $ foldMap (pure . Record . fromList
 
 -- | Returns all the primitive validators embedded in this typed schema
 extractValidators :: TypedSchemaFlex from a -> Validators
-extractValidators = go . unwrap where
+extractValidators = go where
   go :: TypedSchemaFlexMu v from a -> Validators
   go (TPrim n parse _) =
     [ ( n
@@ -385,23 +381,29 @@ extractValidators = go . unwrap where
 type E = [(Trace, Mismatch)]
 
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
-encodeWith :: TypedSchemaFlex from a -> from -> Value
+encodeWith :: (Typeable from, Typeable a) => TypedSchemaFlex from a -> from -> Value
 encodeWith sc =
   fromRight (error "Internal error") $ encodeToWith sc (NE.head $ extractSchema sc)
 
-encodeToWith :: TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
-encodeToWith (TypedSchema sc) target =
+type EncodeInst a = Schema -> Except E (a -> Except E Value)
+
+mapEncodeInst :: (b -> a) -> EncodeInst a -> EncodeInst b
+mapEncodeInst f enc sc = fmap (lmap f) (enc sc)
+
+encodeToWith :: (Typeable from) => TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
+encodeToWith sc target =
   (\m -> either (throw . AllAlternativesFailed) id . runExcept . m) <$> runExcept (go [] sc target)
  where
   failWith ctx m = throwE [(reverse ctx, m)]
 
-  go
-    :: Trace
-    -> TypedSchemaFlexMu v from a
+  go :: Typeable from
+    => Trace
+    -> TypedSchemaFlexMu (EncodeInst Dynamic) from a
     -> Schema
-    -- Returns a set of mismatches or an encoding function that can fail (TTry)
     -> Except E (from -> Except E Value)
   -- go _ sc t | pTraceShow (sc, t) False = undefined
+  go _tx (TVar v) sc = mapEncodeInst toDyn v sc
+  go ctx (TMu  f) sc = fmap (lmap toDyn) $ fix (mapEncodeInst (fromJust . fromDynamic) . go ctx . f) sc
   go _tx TEmpty{} Array{}     = pure $ pure . const (A.Array [])
   go _tx TEmpty{} Record{}    = pure $ pure . const (A.Object [])
   go _tx TEmpty{} StringMap{} = pure $ pure . const (A.Object [])
@@ -442,7 +444,7 @@ encodeToWith (TypedSchema sc) target =
         )
         alts
    where
-    extractField :: RecordField v from a -> NonDet [(Text, from -> Except E (Maybe Value))]
+    extractField :: Typeable from => RecordField (EncodeInst Dynamic) from a -> NonDet [(Text, from -> Except E (Maybe Value))]
     extractField RequiredAp {..} =
       case Map.lookup fieldName target of
         Nothing -> return []
@@ -482,7 +484,7 @@ data DecodeError
 
 -- | Runs a schema as a function @enc -> dec@. Loops for infinite/circular data
 runSchema :: TypedSchemaFlex enc dec -> enc -> Either [DecodeError] dec
-runSchema (TypedSchema sc) = runExcept . go sc
+runSchema sc = runExcept . go sc
     where
         go :: forall from a v. TypedSchemaFlexMu v from a -> from -> Except [DecodeError] a
         go (TEmpty a       ) _    = pure a
@@ -514,7 +516,7 @@ decodeWith sc v = decoder >>= ($ v)
 
 decodeFromWith :: TypedSchemaFlex from a -> Schema -> Either D (Value -> Either D a)
 -- TODO merge runSchema and decodeFromWith ?
-decodeFromWith (TypedSchema sc) source = (runExcept .) <$> runExcept (go [] sc source)
+decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc source)
   where
     failWith ctx e = throwE [(reverse ctx, DecodeError e)]
 

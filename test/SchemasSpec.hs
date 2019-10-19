@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -14,6 +15,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Foldable
 import Data.Functor.Identity
 import Data.Maybe
+import Data.Typeable
 import Generators
 import Person
 import Person2
@@ -33,14 +35,14 @@ main = hspecWith defaultConfig{configQuickCheckMaxSuccess = Just 10000} spec
 
 spec :: Spec
 spec = do
-  -- describe "encode" $ do
-    -- prop "is the inverse of decoding" $ \(sc :: Schema) ->
-    --   decode (encode sc) ==  Right sc
+  describe "encode" $ do
+    prop "is the inverse of decoding" $ \(sc :: Schema) ->
+      decode (encode sc) ==  Right sc
   describe "encodeTo" $ do
     it "laziness delivers" $ do
-      evaluate (fromRight undefined (encodeToWith (TypedSchema $ record $ Just <$> field "bottom" fromJust) (Record [makeField "bottom" prim True])) (Nothing :: Maybe Bool))
+      evaluate (fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [makeField "bottom" prim True])) (Nothing :: Maybe Bool))
         `shouldThrow` \(_ :: SomeException) -> True
-      fromRight undefined (encodeToWith (TypedSchema $ record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
+      fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
         `shouldBe` A.Object []
   describe "finite" $ do
     it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
@@ -104,11 +106,11 @@ spec = do
       prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
         theSchema @Schema `shouldBeSubtypeOf` finite n (theSchema @Schema)
     describe "Person" $ do
-      schemaSpec schemaSealed pepe
+      schemaSpec schema pepe
     describe "Person2" $ do
-      schemaSpec schemaSealed pepe2
+      schemaSpec schema pepe2
       it "Person2 < Person" $ do
-         shouldBeAbleToEncode @Person2 (extractSchema @Person schemaSealed)
+         shouldBeAbleToEncode @Person2 (extractSchema @Person schema)
          -- shouldBeAbleToDecode @Person (extractSchema @Person2 schema)
       it "pepe2 `as` Person" $ do
         let encoder = encodeTo (theSchema @Person)
@@ -120,14 +122,14 @@ spec = do
         fromRight undefined decoder (encode pepe) `shouldBe` Right pepe2{Person2.education = [Person.studies pepe]}
       it "Person < Person2" $ do
         -- shouldBeAbleToEncode @Person  (extractSchema @Person2 schema)
-        shouldBeAbleToDecode @Person2 (extractSchema @Person schemaSealed)
+        shouldBeAbleToDecode @Person2 (extractSchema @Person schema)
     describe "Person3" $ do
       it "cannot compute an encoder for Person3 (infinite schema)" $
         shouldLoop $ evaluate encoder_p3v0
       it "finiteEncode works as expected" $ shouldLoop $ evaluate $ A.encode
         (finiteEncode 4 laura3)
     describe "Person4" $ do
-      schemaSpec schemaSealed pepe4
+      schemaSpec schema pepe4
       let encoded_pepe4 = fromRight undefined encoder_p4v0 pepe4
           encoded_pepe3 = fromRight undefined encoder_p3_to_p4 pepe3{Person3.spouse = Nothing}
           encoded_pepe2 = fromRight undefined encoder_p2_to_p4 pepe2
@@ -162,7 +164,7 @@ spec = do
         shouldNotLoop $ evaluate $ length $ show res
         res `shouldBe` Right pepe4
 
-schemaSpec :: (Eq a, Show a) => TypedSchema a -> a -> Spec
+schemaSpec :: (Eq a, Show a, Typeable a) => TypedSchema a -> a -> Spec
 schemaSpec sc ex = do
   let encoder = encodeToWith sc (NE.head $ extractSchema sc)
       decoder = decodeFromWith sc (NE.head $ extractSchema sc)
@@ -196,7 +198,7 @@ shouldNotLoop act = do
   res <- timeout 1000000 act
   res `shouldSatisfy` isJust
 
-shouldBeAbleToEncode :: forall a . (HasSchema a) => NE.NonEmpty Schema -> Expectation
+shouldBeAbleToEncode :: forall a . (HasSchema a, Typeable a) => NE.NonEmpty Schema -> Expectation
 shouldBeAbleToEncode sc = asumEither (fmap (encodeTo @a) sc) `shouldSatisfy` isRight
 
 shouldBeAbleToDecode :: forall a . (HasSchema a) => NE.NonEmpty Schema -> Expectation
