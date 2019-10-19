@@ -38,9 +38,9 @@ spec = do
     --   decode (encode sc) ==  Right sc
   describe "encodeTo" $ do
     it "laziness delivers" $ do
-      evaluate (fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [makeField "bottom" prim True])) (Nothing :: Maybe Bool))
+      evaluate (fromRight undefined (encodeToWith (TypedSchema $ record $ Just <$> field "bottom" fromJust) (Record [makeField "bottom" prim True])) (Nothing :: Maybe Bool))
         `shouldThrow` \(_ :: SomeException) -> True
-      fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
+      fromRight undefined (encodeToWith (TypedSchema $ record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
         `shouldBe` A.Object []
   describe "finite" $ do
     it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
@@ -104,11 +104,11 @@ spec = do
       prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
         theSchema @Schema `shouldBeSubtypeOf` finite n (theSchema @Schema)
     describe "Person" $ do
-      schemaSpec schema pepe
+      schemaSpec schemaSealed pepe
     describe "Person2" $ do
-      schemaSpec schema pepe2
+      schemaSpec schemaSealed pepe2
       it "Person2 < Person" $ do
-         shouldBeAbleToEncode @Person2 (extractSchema @Person schema)
+         shouldBeAbleToEncode @Person2 (extractSchema @Person schemaSealed)
          -- shouldBeAbleToDecode @Person (extractSchema @Person2 schema)
       it "pepe2 `as` Person" $ do
         let encoder = encodeTo (theSchema @Person)
@@ -120,14 +120,14 @@ spec = do
         fromRight undefined decoder (encode pepe) `shouldBe` Right pepe2{Person2.education = [Person.studies pepe]}
       it "Person < Person2" $ do
         -- shouldBeAbleToEncode @Person  (extractSchema @Person2 schema)
-        shouldBeAbleToDecode @Person2 (extractSchema @Person schema)
+        shouldBeAbleToDecode @Person2 (extractSchema @Person schemaSealed)
     describe "Person3" $ do
       it "cannot compute an encoder for Person3 (infinite schema)" $
         shouldLoop $ evaluate encoder_p3v0
       it "finiteEncode works as expected" $ shouldLoop $ evaluate $ A.encode
         (finiteEncode 4 laura3)
     describe "Person4" $ do
-      schemaSpec schema pepe4
+      schemaSpec schemaSealed pepe4
       let encoded_pepe4 = fromRight undefined encoder_p4v0 pepe4
           encoded_pepe3 = fromRight undefined encoder_p3_to_p4 pepe3{Person3.spouse = Nothing}
           encoded_pepe2 = fromRight undefined encoder_p2_to_p4 pepe2
