@@ -1,11 +1,13 @@
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE OverloadedLists   #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms   #-}
-{-# LANGUAGE RecordWildCards   #-}
-{-# LANGUAGE TupleSections     #-}
-{-# LANGUAGE ViewPatterns      #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE OverloadedLabels    #-}
+{-# LANGUAGE OverloadedLists     #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE PatternSynonyms     #-}
+{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE ViewPatterns        #-}
 {-# OPTIONS -Wno-name-shadowing    #-}
 
 module Schemas.Untyped where
@@ -33,6 +35,7 @@ import           GHC.Generics               (Generic)
 import           Numeric.Natural
 import           Prelude                    hiding (lookup)
 import           Text.Read
+import           Text.Show.Functions        ()
 
 -- import           Debug.Pretty.Simple
 
@@ -45,52 +48,61 @@ import           Text.Read
 --   * introduction forms: 'extractSchema', 'theSchema', 'mempty'
 --   * operations: 'isSubtypeOf', 'versions', 'coerce', 'validate'
 --   * composition: '(<>)'
-data Schema
-  = Array Schema
-  | StringMap Schema
+data Schema a
+  = Array (Schema a)
+  | StringMap (Schema a)
   | Enum   (NonEmpty Text)
-  | Record (HashMap Text Field)
-  | OneOf (NonEmpty Schema)   -- ^ Decoding works for all alternatives, encoding only for one
-  | Prim Text                 -- ^ Carries the name of primitive type
-  deriving (Eq, Generic, Show)
+  | Record (HashMap Text (Field a))
+  | OneOf (NonEmpty (Schema a))   -- ^ Decoding works for all alternatives, encoding only for one
+  | Prim Text                     -- ^ Carries the name of primitive type
+  | Var a
+  | Mu (a -> NonEmpty (Schema a))          -- ^ Recursive binder with non-determinism
+  deriving (Generic, Show)
 
-instance Monoid Schema where mempty = Empty
-instance Semigroup Schema where
+type SchemaSealed = forall a . Schema a
+
+newtype Sealed f = Sealed {unseal :: forall a . f a}
+
+overSealed :: (forall a . f a -> g a) -> Sealed f -> Sealed g
+overSealed f (Sealed x) = Sealed (f x)
+
+instance Monoid (Schema a) where mempty = Empty
+instance Semigroup (Schema a) where
   Empty <> x    = x
   x <> Empty    = x
   OneOf aa <> b = OneOf (aa <> [b])
   b <> OneOf aa = OneOf ([b] <> aa)
   a <> b        = OneOf [a,b]
 
-data Field = Field
-  { fieldSchema :: Schema
+data Field a = Field
+  { fieldSchema :: Schema a
   , isRequired  :: Bool -- ^ defaults to True
   }
-  deriving (Eq, Generic)
+  deriving (Generic)
 
-instance Show Field where
-  showsPrec p (Field sc True) = showsPrec p sc
+instance Show a => Show (Field a) where
+  showsPrec p (Field sc True)  = showsPrec p sc
   showsPrec p (Field sc False) = ("?" ++) . showsPrec p sc
 
-fieldSchemaL :: Applicative f => (Schema -> f Schema) -> Field -> f Field
+fieldSchemaL :: Applicative f => ((Schema a) -> f (Schema a)) -> (Field a) -> f (Field a)
 fieldSchemaL f Field{..} = Field <$> f fieldSchema <*> pure isRequired
 
-pattern Empty :: Schema
+pattern Empty :: (Schema a)
 pattern Empty <- Record [] where Empty = Record []
 
-pattern Union :: NonEmpty (Text, Schema) -> Schema
+pattern Union :: NonEmpty (Text, (Schema a)) -> (Schema a)
 pattern Union alts <- (preview _Union -> Just alts) where
   Union alts = review _Union alts
 
-_Empty :: Prism' Schema ()
+_Empty :: Prism' (Schema a) ()
 _Empty = prism' build match
   where
     build () = Record []
 
     match (Record []) = Just ()
-    match _ = Nothing
+    match _           = Nothing
 
-_Union :: Prism' Schema (NonEmpty (Text, Schema))
+_Union :: Prism' (Schema a) (NonEmpty (Text, (Schema a)))
 _Union = prism' build match
   where
     build = OneOf . fmap (\(n,sc) -> Record [(n, Field sc True)])
@@ -98,19 +110,19 @@ _Union = prism' build match
     match (OneOf scc) = traverse viewAlt scc
     match _           = Nothing
 
-    viewAlt :: Schema -> Maybe (Text, Schema)
+    viewAlt :: (Schema a) -> Maybe (Text, (Schema a))
     viewAlt (Record [(n,Field sc True)]) = Just (n, sc)
     viewAlt _                            = Nothing
 
 -- --------------------------------------------------------------------------------
 -- Finite schemes
 
--- | Ensure that a 'Schema' is finite by enforcing a max depth.
+-- | Ensure that a '(Schema a)' is finite by enforcing a max depth.
 --   The result is guaranteed to be a supertype of the input.
-finite :: Natural -> Schema -> Schema
+finite :: Natural -> (Schema a) -> (Schema a)
 finite = go
  where
-  go :: Natural -> Schema -> Schema
+  go :: Natural -> (Schema a) -> (Schema a)
   go 0 _ = Empty
   go d (Record    opts) = Record $ fromList $ mapMaybe
     (\(fieldname, Field sc isOptional) -> case go (max 0 (pred d)) sc of
@@ -124,7 +136,7 @@ finite = go
   go _ other            = other
 
 -- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
-finiteValue :: Validators -> Natural -> Schema -> Value -> Value
+finiteValue :: Show a => Validators -> Natural -> (Schema a) -> Value -> Value
 finiteValue validators d sc
   | Right cast <- isSubtypeOf validators sc (finite d sc) = cast
   | otherwise = error "bug in isSubtypeOf"
@@ -142,8 +154,8 @@ data Mismatch
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
   | InvalidConstructor { name :: Text}
   | InvalidUnionValue  { contents :: Value}
-  | SchemaMismatch     {a, b :: Schema}
-  | ValueMismatch      {expected :: Schema, got :: Value}
+  | SchemaMismatch     {a, b :: String}
+  | ValueMismatch      {expected :: String, got :: Value}
   | EmptyAllOf
   | PrimValidatorMissing { name :: Text }
   | PrimError {name, primError :: Text}
@@ -153,7 +165,10 @@ data Mismatch
   | AllAlternativesFailed { mismatches :: [(Trace,Mismatch)]}
   | UnexpectedAllOf
   | NoMatches
-  deriving (Eq, Show, Typeable)
+  deriving (Typeable)
+
+instance Show Mismatch where
+  show _ = "TBI"
 
 instance Exception Mismatch
 
@@ -162,16 +177,16 @@ type ValidatePrim = Value -> Maybe Text
 
 -- | Structural validation of a JSON value against a schema
 --   Ignores extraneous fields in records
-validate :: Validators -> Schema -> Value -> [(Trace, Mismatch)]
+validate :: forall a. Show a => Validators -> (Schema a) -> Value -> [(Trace, Mismatch)]
 validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept (go [] sc v) where
   failWith :: Trace -> Mismatch -> Except [(Trace, Mismatch)] ()
   failWith ctx e = throwE [(ctx, e)]
 
-  go :: Trace -> Schema -> Value -> Except [(Trace, Mismatch)] ()
+  go :: Trace -> (Schema a) -> Value -> Except [(Trace, Mismatch)] ()
   go ctx (Prim n) x = case Map.lookup n validators of
     Nothing -> failWith ctx (PrimValidatorMissing n)
     Just v -> case v x of
-      Nothing -> pure ()
+      Nothing  -> pure ()
       Just err -> failWith ctx (PrimError n err)
   go ctx (StringMap sc) (A.Object xx) = ifor_ xx $ \i -> go (i : ctx) sc
   go ctx (Array sc) (A.Array xx) =
@@ -196,7 +211,7 @@ validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept
           (toList scc)
       )
       alts
-  go ctx a           b = failWith ctx (ValueMismatch a b)
+  go ctx a           b = failWith ctx (ValueMismatch (show a) b)
 
 -- ------------------------------------------------------------------------------------------------------
 -- Subtype relation
@@ -207,14 +222,14 @@ validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept
 --   Just <function>
 -- > Record [("a", Bool)] `isSubtypeOf` Record [("a", Number)]
 --   Nothing
-isSubtypeOf :: Validators -> Schema -> Schema -> Either [(Trace, Mismatch)] (Value -> Value)
+isSubtypeOf :: forall a . Show a => Validators -> (Schema a) -> (Schema a) -> Either [(Trace, Mismatch)] (Value -> Value)
 isSubtypeOf validators sub sup = runExcept $ go [] sup sub
  where
-  failWith :: Trace -> Mismatch -> Except [(Trace, Mismatch)] a
+  failWith :: Trace -> Mismatch -> Except [(Trace, Mismatch)] b
   failWith ctx m = throwE [(reverse ctx, m)]
 
         -- TODO go: fix confusing order of arguments
-  go :: Trace -> Schema -> Schema -> Except [(Trace,Mismatch)] (Value -> Value)
+  go :: Trace -> (Schema a) -> (Schema a) -> Except [(Trace,Mismatch)] (Value -> Value)
 --  go _ sup sub | pTraceShow ("isSubtypeOf", sub, sup) False = undefined
   go _tx Empty         _         = pure $ const emptyValue
   go _tx (Array     _) Empty     = pure $ const (A.Array [])
@@ -236,7 +251,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
       Just xx -> failWith ctx $ MissingEnumChoices xx
   go ctx (Union opts) (Union opts') = do
     ff <- forM opts' $ \(n, sc) -> do
-      sc' <- maybe (failWith ctx $ InvalidConstructor n) pure $ lookup n (toList opts)
+      sc' :: Schema a <- maybe (failWith ctx $ InvalidConstructor n) return $ lookup n (toList opts)
       f   <- go (n : ctx) sc sc'
       return $ over (_Object . ix n) f
     return (foldr (.) id ff)
@@ -264,8 +279,8 @@ isSubtypeOf validators sub sup = runExcept $ go [] sup sub
   go ctx (Array a) b = do
     f <- go ctx a b
     pure (A.Array . fromList . (: []) . f)
-  go _tx a b | a == b  = pure id
-  go ctx a b           = failWith ctx (SchemaMismatch a b)
+  -- go _tx a b | a == b  = pure id
+  go ctx a b           = failWith ctx (SchemaMismatch (show a) (show b))
 
 -- ----------------------------------------------
 -- Utils

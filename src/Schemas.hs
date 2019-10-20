@@ -66,7 +66,7 @@ module Schemas
   , fieldName
   , fieldNameL
   , overFieldNames
-  , extractFields
+  -- , extractFields
   -- *** Partial schemas
   , liftJust
   , liftRight
@@ -90,7 +90,7 @@ module Schemas
   , DecodeError(..)
   -- * working with recursive schemas
   , finiteValue
-  , finiteEncode
+  -- , finiteEncode
 
   -- * Untyped schemas
   , Schema(.., Empty, Union)
@@ -104,7 +104,7 @@ module Schemas
   , Mismatch(..)
   , Trace
   , isSubtypeOf
-  , coerce
+  -- , coerce
   , finite
   , validate
   , validatorsFor

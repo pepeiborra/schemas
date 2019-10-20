@@ -71,15 +71,10 @@ instance (Eq a, Hashable a, Typeable a, HasSchema a) => HasSchema (HashSet a) wh
 instance  (Typeable a, HasSchema a) => HasSchema (NonEmpty a) where
   schema = list schema
 
-instance HasSchema Field where
-  schema = record $ Field <$> field "schema" fieldSchema <*> fmap
-    (fromMaybe True)
-    (optField "isRequired" (\x -> if isRequired x then Nothing else Just False))
-
 instance HasSchema a => HasSchema (Identity a) where
   schema = dimap runIdentity Identity schema
 
-instance HasSchema Schema where
+instance Typeable a => HasSchema (Schema a) where
   schema = mu ( \self -> ( union'
     [ altWith ((self)) "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
     , altWith ((self)) "Array"     $ prism' Array (\case Array x -> Just x ; _ -> Nothing)
@@ -153,7 +148,7 @@ instance Key String where
 -- HasSchema aware combinators
 -- -----------------------------------------------------------------------------------
 -- | Extract the default 'Schema' for a type
-theSchema :: forall a . HasSchema a => Schema
+theSchema :: forall a . HasSchema a => Sealed Schema
 theSchema = NE.head $ extractSchema (schema @a)
 
 validatorsFor :: forall a . HasSchema a => Validators
@@ -166,12 +161,12 @@ encode = encodeWith schema
 -- | Attempt to encode to the target schema using the default schema.
 --   First encodes using the default schema, then computes a coercion
 --   applying 'isSubtypeOf', and then applies the coercion to the encoded data.
-encodeTo :: (HasSchema a, Typeable a) => Schema -> Either [(Trace, Mismatch)] (a -> Value)
+encodeTo :: (HasSchema a, Typeable a) => Sealed Schema -> Either [(Trace, Mismatch)] (a -> Value)
 encodeTo = encodeToWith schema
 
--- | Encode a value into a finite representation by enforcing a max depth
-finiteEncode :: forall a. (HasSchema a, Typeable a) => Natural -> a -> Value
-finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
+-- -- | Encode a value into a finite representation by enforcing a max depth
+-- finiteEncode :: forall a. (HasSchema a, Typeable a) => Natural -> a -> Value
+-- finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
 
 -- | Decode using the default schema.
 decode :: HasSchema a => Value -> Either [(Trace, DecodeError)] a
@@ -179,14 +174,14 @@ decode = decodeWith schema
 
 -- | Apply `isSubtypeOf` to construct a coercion from the source schema to the default schema,
 --   apply the coercion to the data, and attempt to decode using the default schema.
-decodeFrom :: HasSchema a => Schema -> Either [(Trace, DecodeError)] (Value -> Either [(Trace, DecodeError)] a)
+decodeFrom :: HasSchema a => Sealed Schema -> Either [(Trace, DecodeError)] (Value -> Either [(Trace, DecodeError)] a)
 decodeFrom = decodeFromWith schema
 
--- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
-coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
-coerce = case isSubtypeOf (validatorsFor @sub) (theSchema @sub) (theSchema @sup) of
-  Right cast -> Just . cast
-  _          -> const Nothing
+-- -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
+-- coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
+-- coerce = case isSubtypeOf (validatorsFor @sub) (theSchema @sub) (theSchema @sup) of
+--   Right cast -> Just . cast
+--   _          -> const Nothing
 
 -- | @field name get@ introduces a field with the default schema for the type
 field :: HasSchema a => Text -> (from -> a) -> RecordFieldsMu v from a

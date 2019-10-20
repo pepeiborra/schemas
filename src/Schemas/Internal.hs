@@ -1,11 +1,10 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImpredicativeTypes         #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PatternSynonyms            #-}
@@ -13,13 +12,14 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeOperators              #-}
 {-# OPTIONS -Wno-name-shadowing    #-}
 module Schemas.Internal where
 
 import           Control.Alternative.Free
 import           Control.Applicative        (Alternative (..))
 import           Control.Exception
-import           Control.Lens               hiding (Empty, enum, (<.>), allOf)
+import           Control.Lens               hiding (Empty, allOf, enum, (<.>))
 import           Control.Monad
 import           Control.Monad.Trans.Except
 import           Data.Aeson                 (Value)
@@ -46,7 +46,9 @@ import           GHC.Exts                   (IsList (..))
 import           Prelude                    hiding (lookup)
 import           Schemas.Untyped
 
--- import Debug.Pretty.Simple
+import Unsafe.Coerce
+
+import Debug.Pretty.Simple
 
 -- Typed schemas
 -- --------------------------------------------------------------------------------
@@ -79,8 +81,17 @@ data TypedSchemaFlexMu v from a where
 
 type TypedSchemaFlex from a = forall v. TypedSchemaFlexMu v from a
 
+newtype TypedSchemaWrapped from to = TypedSchemaWrapped (forall a . TypedSchemaFlexMu a from to)
+
+withTypedSchemaWrapped :: (forall v . TypedSchemaFlexMu v from a -> b) -> TypedSchemaWrapped from a -> b
+withTypedSchemaWrapped f (TypedSchemaWrapped s) = f s
+
 type TypedSchemaMu v a = TypedSchemaFlexMu v a a
 type TypedSchema a = TypedSchemaFlex a a
+
+mapV :: (v -> v') -> (v' -> v) -> TypedSchemaFlexMu v from a -> TypedSchemaFlexMu v' from a
+mapV f _  (TVar v) = TVar (f v)
+mapV f f' (TMu  h) = TMu (mapV f f' . h . f')
 
 mu :: (TypedSchemaFlexMu v from a -> TypedSchemaFlexMu v from a) -> TypedSchemaFlexMu v from a
 mu f = (TMu (\x -> (f (TVar x))))
@@ -132,7 +143,7 @@ oneOf :: NonEmpty (TypedSchemaFlexMu v from a) -> TypedSchemaFlexMu v from a
 oneOf [x] = x
 oneOf x = TOneOf $ sconcat $ fmap f x where
   f (TOneOf xx) = xx
-  f (x) = [x]
+  f (x)         = [x]
 
 instance Profunctor (TypedSchemaFlexMu v) where
   dimap _ _ (TVar v) = TVar v
@@ -177,6 +188,10 @@ data RecordField v from a where
                 , fieldDefValue :: a
                 } -> RecordField v from a
 
+mapRecordFieldV :: (v->v') -> (v'->v) -> RecordField v from a -> RecordField v' from a
+mapRecordFieldV f f' RequiredAp{..} = RequiredAp{fieldTypedSchema = mapV f f' fieldTypedSchema, ..}
+mapRecordFieldV f f' OptionalAp{..} = OptionalAp{fieldTypedSchema = mapV f f' fieldTypedSchema, ..}
+
 -- | Lens for the 'fieldName' attribute
 fieldNameL :: Lens' (RecordField v from a) Text
 fieldNameL f (RequiredAp n sc) = (`RequiredAp` sc) <$> f n
@@ -196,26 +211,10 @@ instance Profunctor (RecordField v) where
 newtype RecordFieldsMu v from a = RecordFieldsMu {getRecordFields :: Alt (RecordField v from) a}
   deriving newtype (Functor, Applicative, Alternative, Monoid, Semigroup)
 
-newtype RecordFields from a = RecordFields (forall v . Alt (RecordField v from) a)
+type RecordFields from a = forall v . RecordFieldsMu v from a
 
-getRecordFieldsMu :: RecordFields from a -> RecordFieldsMu v from a
-getRecordFieldsMu (RecordFields rr) = RecordFieldsMu rr
-
-instance Functor (RecordFields from) where
-  fmap f (RecordFields x) = RecordFields (fmap f x)
-
-instance Applicative (RecordFields from) where
-  pure x = RecordFields (pure x)
-  RecordFields f <*> RecordFields v = RecordFields (f <*> v)
-
-instance Alternative (RecordFields from) where
-  empty = RecordFields empty
-  RecordFields a <|> RecordFields b = RecordFields (a <|> b)
-
-instance Monoid (RecordFields from a) where mempty = RecordFields mempty
-
-instance Semigroup (RecordFields from a) where
-  RecordFields a <> RecordFields b = RecordFields (a <> b)
+mapRecordFieldsMu :: (v->v') -> (v'->v) -> RecordFieldsMu v from a -> RecordFieldsMu v' from a
+mapRecordFieldsMu f f' (RecordFieldsMu rr) = RecordFieldsMu (hoistAlt (mapRecordFieldV f f') rr)
 
 instance Profunctor (RecordFieldsMu v) where
   dimap f g (RecordFieldsMu rr) = RecordFieldsMu $ hoistAlt (lmap f) $ fmap g rr
@@ -273,20 +272,6 @@ optFieldEitherWith
     :: TypedSchemaFlexMu v from (Either e a) -> Text -> e -> RecordFieldsMu v from (Either e a)
 optFieldEitherWith schema n e = optFieldGeneral schema n (Left e)
 
--- | Extract all the field groups (from alternatives) in the record
-extractFields :: RecordFields from a -> [ [(Text, Field)] ]
-extractFields = extractFieldsMu . getRecordFieldsMu
-
-extractFields' :: (forall v. RecordFieldsMu v from a) -> [ [(Text, Field)] ]
-extractFields' x = extractFieldsMu x
-
-extractFieldsMu :: RecordFieldsMu (NonEmpty Schema) from a -> [ [(Text, Field)] ]
-extractFieldsMu = runAlt_ (\x -> (:[]) <$> extractField x) . getRecordFields where
-
-  extractField :: RecordField (NonEmpty Schema) from a -> [(Text, Field)]
-  extractField (RequiredAp n sc) = (n,) . (`Field` True) <$> NE.toList (extractSchemaMu sc)
-  extractField (OptionalAp n sc _) = (n,) . (`Field` False) <$> NE.toList (extractSchemaMu sc)
-
 newtype NonDet a = NonDet { nonDet :: [a] }
   deriving newtype (Applicative, Alternative, Foldable, Functor, Monad)
 
@@ -338,21 +323,32 @@ union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism c p sc)
 -- Schema extraction from a TypedSchema
 
 -- | Extract an untyped schema that can be serialized
-extractSchema :: TypedSchemaFlex from a -> NonEmpty Schema
-extractSchema = extractSchemaMu
+extractSchema :: TypedSchemaFlex from a -> NonEmpty (Sealed Schema)
+extractSchema s =
+  fmap (\x -> unsafeCoerce {- Propagating existentialness is hard-} x) (extractSchemaMu s)
+  where
+    extractSchemaMu :: TypedSchemaFlexMu a from to -> NonEmpty (Schema a)
+    extractSchemaMu (TVar v)         = pure $ Var v
+    extractSchemaMu (TMu  f)         = pure $ Mu (extractSchemaMu . f)
+    extractSchemaMu (TPrim n _ _)    = pure $ Prim n
+    extractSchemaMu (TTry _ sc _)    = extractSchemaMu sc
+    extractSchemaMu (TOneOf scc)     = pure $ OneOf $ extractSchemaMu =<< scc
+    extractSchemaMu (TAllOf scc)     = extractSchemaMu =<< scc
+    extractSchemaMu (TEmpty{})       = pure $ Empty
+    extractSchemaMu (TEnum opts  _)  = pure $ Enum (fst <$> opts)
+    extractSchemaMu (TArray sc _ _)  = Array <$> extractSchemaMu sc
+    extractSchemaMu (TMap sc _ _)    = StringMap <$> extractSchemaMu sc
+    extractSchemaMu (RecordSchema rs) = fromList $
+      foldMap (\x -> pure (Record (fromList x))) (extractFieldsMu rs)
 
-extractSchemaMu :: TypedSchemaFlexMu (NonEmpty Schema) from a -> NonEmpty Schema
-extractSchemaMu (TVar v)         = v
-extractSchemaMu (TMu  f)         = fix (extractSchemaMu . f)
-extractSchemaMu (TPrim n _ _)    = pure $ Prim n
-extractSchemaMu (TTry _ sc _)    = extractSchemaMu sc
-extractSchemaMu (TOneOf scc)     = pure $ OneOf $ extractSchemaMu =<< scc
-extractSchemaMu (TAllOf scc)     = extractSchemaMu =<< scc
-extractSchemaMu TEmpty{}         = pure Empty
-extractSchemaMu (TEnum opts  _)  = pure $ Enum (fst <$> opts)
-extractSchemaMu (TArray sc _ _)  = Array <$> extractSchemaMu sc
-extractSchemaMu (TMap sc _ _)    = StringMap <$> extractSchemaMu sc
-extractSchemaMu (RecordSchema rs) = fromList $ foldMap (pure . Record . fromList) (extractFieldsMu rs)
+    -- | Extract all the field groups (from alternatives) in the record
+    extractFieldsMu :: RecordFieldsMu a from to -> [ [(Text, Field a)] ]
+    extractFieldsMu = runAlt_ (\x -> (:[]) <$> NE.toList (extractField x)) . getRecordFields where
+
+      extractField :: RecordField a from to -> NonEmpty (Text, Field a)
+      extractField (RequiredAp n sc  ) = (\s -> (n, (`Field` True) s)) <$> (extractSchemaMu sc)
+      extractField (OptionalAp n sc _) = (\s -> (n, (`Field` False) s)) <$> (extractSchemaMu sc)
+
 
 -- | Returns all the primitive validators embedded in this typed schema
 extractValidators :: TypedSchemaFlex from a -> Validators
@@ -385,51 +381,58 @@ encodeWith :: (Typeable from, Typeable a) => TypedSchemaFlex from a -> from -> V
 encodeWith sc =
   fromRight (error "Internal error") $ encodeToWith sc (NE.head $ extractSchema sc)
 
-type EncodeInst a = Schema -> Except E (a -> Except E Value)
+type TypedSchemaVarEncode a = (Int, Except E (a -> Except E Value))
 
-mapEncodeInst :: (b -> a) -> EncodeInst a -> EncodeInst b
-mapEncodeInst f enc sc = fmap (lmap f) (enc sc)
+mapTypedSchemaVarEncode :: (b -> a) -> TypedSchemaVarEncode a -> TypedSchemaVarEncode b
+mapTypedSchemaVarEncode f = second (fmap (lmap f))
 
-encodeToWith :: (Typeable from) => TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
+encodeToWith :: (Typeable from) => TypedSchemaFlex from a -> (Sealed Schema) -> Either E (from -> Value)
 encodeToWith sc target =
-  (\m -> either (throw . AllAlternativesFailed) id . runExcept . m) <$> runExcept (go [] sc target)
+  (\m -> either (throw . AllAlternativesFailed) id . runExcept . m) <$> runExcept (go 0 [] sc (unseal target))
  where
   failWith ctx m = throwE [(reverse ctx, m)]
 
   go :: Typeable from
-    => Trace
-    -> TypedSchemaFlexMu (EncodeInst Dynamic) from a
-    -> Schema
+    => Int
+    -> Trace
+    -> TypedSchemaFlexMu (TypedSchemaVarEncode Dynamic) from a
+    -> Schema Int
     -> Except E (from -> Except E Value)
-  -- go _ sc t | pTraceShow (sc, t) False = undefined
-  go _tx (TVar v) sc = mapEncodeInst toDyn v sc
-  go ctx (TMu  f) sc = fmap (lmap toDyn) $ fix (mapEncodeInst (fromJust . fromDynamic) . go ctx . f) sc
-  go _tx TEmpty{} Array{}     = pure $ pure . const (A.Array [])
-  go _tx TEmpty{} Record{}    = pure $ pure . const (A.Object [])
-  go _tx TEmpty{} StringMap{} = pure $ pure . const (A.Object [])
-  go _tx TEmpty{} OneOf{}     = pure $ pure . const emptyValue
-  go ctx (TPrim n _ fromf) (Prim n')
+  -- go _ _ _  t | pTraceShow (t) False = undefined
+  go _ _tx (TVar ~(i,enc)) (Var v') | i == v' = do
+    -- TODO understand why this "boxing" works and explain it
+     let Right res = runExcept $ fmap (lmap toDyn) enc
+     return res
+  go i ctx (TMu f) (Mu f') =
+    let sc = NE.head (f' i) -- TODO Assert that there is only one element ?
+        r x = mapTypedSchemaVarEncode (fromJust . fromDynamic) . (\t -> (i, go (succ i) ctx t sc)) . f $ x
+    in lmap toDyn <$> snd (fix r)
+  go _ _tx TEmpty{} Array{}     = pure $ pure . const (A.Array [])
+  go _ _tx TEmpty{} Record{}    = pure $ pure . const (A.Object [])
+  go _ _tx TEmpty{} StringMap{} = pure $ pure . const (A.Object [])
+  go _ _tx TEmpty{} OneOf{}     = pure $ pure . const emptyValue
+  go _ ctx (TPrim n _ fromf) (Prim n')
     | n == n'   = pure $ pure . fromf
     | otherwise = failWith ctx (PrimMismatch n n')
-  go ctx (TArray sc _ fromf) (Array t) = do
-    f <- go ("[]" : ctx) sc t
+  go i ctx (TArray sc _ fromf) (Array t) = do
+    f <- go i ("[]" : ctx) sc t
     return $ A.Array <.> traverse f . fromf
-  go ctx (TMap sc _ fromf) (StringMap t) = do
-    f <- go ("Map" : ctx) sc t
+  go i ctx (TMap sc _ fromf) (StringMap t) = do
+    f <- go i ("Map" : ctx) sc t
     return $ A.Object <.> traverse f . fromf
-  go ctx (TEnum opts fromf) (Enum optsTarget) = do
+  go _ ctx (TEnum opts fromf) (Enum optsTarget) = do
     case NE.nonEmpty $ NE.filter (`notElem` optsTarget) (fst <$> opts) of
       Nothing -> pure $ pure . A.String . fromf
       Just xx -> failWith ctx $ MissingEnumChoices xx
-  go ctx (TAllOf scc) t = asum $ imap (\i sc -> go (tag i : ctx) sc t) scc
-  go ctx (TOneOf scc) t = do
-    alts <- itraverse (\i sc -> go (tag i : ctx) sc t) scc
+  go n ctx (TAllOf scc) t = asum $ imap (\i sc -> go n (tag i : ctx) sc t) scc
+  go n ctx (TOneOf scc) t = do
+    alts <- itraverse (\i sc -> go n (tag i : ctx) sc t) scc
     return $ \x -> asum $ fmap ($ x) alts
-  go ctx sc              (OneOf tt) = asum $ fmap (go ctx sc) tt
-  go ctx (TTry n sc try) t          = do
-    f <- go (n : ctx) sc t
+  go i ctx sc              (OneOf tt) = asum $ fmap (go i ctx sc) tt
+  go i ctx (TTry n sc try) t          = do
+    f <- go i (n : ctx) sc t
     return $ \x -> f =<< maybe (failWith ctx (TryFailed n)) pure (try x)
-  go ctx (RecordSchema rec) (Record target) = do
+  go i ctx (RecordSchema rec) (Record target) = do
     let alternatives = nonDet $ runAlt_ extractField (getRecordFields rec)
     let targetFields = Set.fromList (Map.keys target)
     let complete = filter ((targetFields ==) . Set.fromList . fmap fst) alternatives
@@ -444,12 +447,12 @@ encodeToWith sc target =
         )
         alts
    where
-    extractField :: Typeable from => RecordField (EncodeInst Dynamic) from a -> NonDet [(Text, from -> Except E (Maybe Value))]
+    extractField :: Typeable from => RecordField (TypedSchemaVarEncode Dynamic) from a -> NonDet [(Text, from -> Except E (Maybe Value))]
     extractField RequiredAp {..} =
       case Map.lookup fieldName target of
         Nothing -> return []
         Just targetField -> do
-          case runExcept $ go (fieldName : ctx) fieldTypedSchema (fieldSchema targetField) of
+          case runExcept $ go i (fieldName : ctx) fieldTypedSchema (fieldSchema targetField) of
             Left _ -> empty
             Right f -> do
               let decoder x = Just <$> f x `catchE` \mm -> failWith ctx (InvalidRecordField fieldName mm)
@@ -460,16 +463,16 @@ encodeToWith sc target =
         Nothing -> return []
         Just targetField -> do
           guard $ not (isRequired targetField)
-          case runExcept $ go (fieldName : ctx) fieldTypedSchema (fieldSchema targetField) of
+          case runExcept $ go i (fieldName : ctx) fieldTypedSchema (fieldSchema targetField) of
             Left _ -> empty
             Right f -> do
               let decoder x = (Just <$> f x) `catchE` \_ -> pure Nothing
               return [(fieldName, decoder)]
-  go ctx sc (Array t) = do
-    f <- go ctx sc t
+  go i ctx sc (Array t) = do
+    f <- go i ctx sc t
     return $ A.Array . fromList . (: []) <.> f
-  go _tx _     Empty = pure $ pure . const emptyValue
-  go ctx other src   = failWith ctx (SchemaMismatch {-(NE.head $ extractSchema other)-} src src)
+  go i _tx _     Empty = pure $ pure . const emptyValue
+  go i ctx other src   = failWith ctx (SchemaMismatch {-(NE.head $ extractSchema other)-} (show src) (show src))
 
 -- --------------------------------------------------------------------------
 -- Decoding
@@ -480,7 +483,7 @@ data DecodeError
   = DecodeError Mismatch
   | UnusedFields [[Text]]
   | TriedAndFailed
-  deriving (Eq, Show)
+  deriving (Show)
 
 -- | Runs a schema as a function @enc -> dec@. Loops for infinite/circular data
 runSchema :: TypedSchemaFlex enc dec -> enc -> Either [DecodeError] dec
@@ -514,30 +517,30 @@ decodeWith sc v = decoder >>= ($ v)
  where
    decoder = decodeFromWith sc (NE.head $ extractSchema sc)
 
-decodeFromWith :: TypedSchemaFlex from a -> Schema -> Either D (Value -> Either D a)
+decodeFromWith :: TypedSchemaFlex from a -> (Sealed Schema) -> Either D (Value -> Either D a)
 -- TODO merge runSchema and decodeFromWith ?
-decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc source)
+decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc (unseal source))
   where
     failWith ctx e = throwE [(reverse ctx, DecodeError e)]
 
-    go :: Trace -> TypedSchemaFlexMu v from a -> Schema -> Except D (Value -> Except D a)
+    go :: Trace -> TypedSchemaFlexMu v from a -> Schema Int -> Except D (Value -> Except D a)
     go _tx (TEmpty a) _ = pure $ const $ pure a
     go ctx (TEnum optsTarget _) s@(Enum optsSource) =
       case NE.nonEmpty $ NE.filter (`notElem` map fst (NE.toList optsTarget)) (optsSource) of
         Just xx -> failWith ctx $ MissingEnumChoices xx
         Nothing -> pure $ \case
           A.String x -> maybe (failWith ctx (InvalidEnumValue x (fst <$> optsTarget))) pure $ lookup x optsTarget
-          other -> failWith ctx (ValueMismatch s other)
+          other -> failWith ctx (ValueMismatch (show s) other)
     go ctx (TArray sc tof _) s@(Array src) = do
       f <- go ("[]" : ctx) sc src
       return $ \case
         A.Array x -> tof <$> traverse f x
-        other -> failWith ctx (ValueMismatch s other)
+        other -> failWith ctx (ValueMismatch (show s) other)
     go ctx (TMap sc tof _) s@(StringMap src) = do
       f <- go ("Map" : ctx) sc src
       return $ \case
         A.Object x -> tof <$> traverse f x
-        other -> failWith ctx (ValueMismatch s other)
+        other -> failWith ctx (ValueMismatch (show s) other)
     go ctx (TPrim n tof _) (Prim src)
       | n /= src = failWith ctx (PrimMismatch n src)
       | otherwise = return $ \x -> case tof x of
@@ -559,7 +562,7 @@ decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc source)
                           xx -> Left (Set.toList xx)
                       ) solutions
       case partitionEithers valid of
-        (ee, []) -> throwE [(reverse ctx, UnusedFields ee)]
+        (ee, [])   -> throwE [(reverse ctx, UnusedFields ee)]
         (_ , alts) -> pure $ \x -> asum $ fmap ($ x) alts
      where
           f' :: RecordField v from a -> (NonDet `Compose` (,) [Text] `Compose` (->) Value `Compose` (Except D)) a
@@ -588,7 +591,7 @@ decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc source)
                       Just v  -> f v)
 
     go ctx s     (OneOf xx) = asum $ fmap (go ctx s) xx
-    go ctx s            src = failWith ctx (SchemaMismatch {-(NE.head $ extractSchemaMu s)-} src src)
+    go ctx s            src = failWith ctx (SchemaMismatch {-(NE.head $ extractSchemaMu s)-} (show src) (show src))
 
 
 -- ----------------------------------------------
