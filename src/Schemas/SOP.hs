@@ -36,13 +36,13 @@ defOptions = Options id id
 fieldSchemaC :: Proxy FieldEncode
 fieldSchemaC = Proxy
 
-gSchema :: forall v a. (HasDatatypeInfo a, All (All FieldEncode `And` Typeable) (Code a)) => Options -> TypedSchemaMu v a
+gSchema :: forall v a. (HasDatatypeInfo a, All (All FieldEncode `And` Typeable) (Code a)) => Options -> TypedSchema a
 gSchema opts = case datatypeInfo (Proxy @a) of
     (Newtype _ _ ci       ) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
     (ADT _ _ (ci :* Nil) _) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
     (ADT _ _ cis         _) -> dimap (unSOP . from) (to . SOP) $ gSchemaNS opts cis
 
-gRecordFields :: forall v a xs. (HasDatatypeInfo a, All FieldEncode xs, Code a ~ '[xs]) => Options -> RecordFieldsMu v a a
+gRecordFields :: forall v a xs. (HasDatatypeInfo a, All FieldEncode xs, Code a ~ '[xs]) => Options -> RecordFields a a
 gRecordFields opts = case datatypeInfo (Proxy @a) of
     (Newtype _ _ ci       ) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gRecordFields' opts ci
     (ADT _ _ (ci :* Nil) _) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gRecordFields' opts ci
@@ -50,7 +50,7 @@ gRecordFields opts = case datatypeInfo (Proxy @a) of
 
 gSchemaNS :: forall xss v .
   All (All FieldEncode `And` Typeable) xss =>
-  Options -> NP ConstructorInfo xss -> TypedSchemaMu v (NS (NP I) xss)
+  Options -> NP ConstructorInfo xss -> TypedSchema (NS (NP I) xss)
 gSchemaNS opts =
     union
         . NE.fromList
@@ -63,7 +63,7 @@ gSchemaNS opts =
             => Injection (NP I) xss xs
             -> Ejection (NP I) xss xs
             -> ConstructorInfo xs
-            -> K (Text, TypedSchemaMu v (NS (NP I) xss)) xs
+            -> K (Text, TypedSchema (NS (NP I) xss)) xs
         mk (Fn inject) (Fn eject) ci = K
             ( cons
             , dimap (unComp . eject . K) (unK . inject . fromJust) (liftJust $ gSchemaNP opts ci)
@@ -75,7 +75,7 @@ gSchemaNP
      . (All FieldEncode xs)
     => Options
     -> ConstructorInfo xs
-    -> TypedSchemaMu v (NP I xs)
+    -> TypedSchema (NP I xs)
 gSchemaNP opts = record . gRecordFields' opts
 
 gRecordFields'
@@ -83,12 +83,12 @@ gRecordFields'
      . (All FieldEncode xs)
     => Options
     -> ConstructorInfo xs
-    -> RecordFieldsMu v (NP I xs) (NP I xs)
+    -> RecordFields (NP I xs) (NP I xs)
 gRecordFields' opts ci =
   hsequence $
   hczipWith fieldSchemaC mk fieldNames projections
   where
-    mk :: (FieldEncode x) => K String x -> Projection I xs x -> RecordFieldsMu v (NP I xs) x
+    mk :: (FieldEncode x) => K String x -> Projection I xs x -> RecordFields (NP I xs) x
     mk (K theFieldName) (Fn proj) =
       fieldEncoder (pack $ fieldLabelModifier opts theFieldName) (dimap K unI proj)
 
@@ -103,7 +103,7 @@ gRecordFields' opts ci =
       SNil  -> Nil
       SCons -> K no :* numbers (no + 1)
 
-class Typeable a => FieldEncode a where fieldEncoder :: Text -> (from -> a) -> RecordFieldsMu v from a
+class Typeable a => FieldEncode a where fieldEncoder :: Text -> (from -> a) -> RecordFields from a
 
 instance {-# OVERLAPPABLE #-} (HasSchema a, Typeable a) => FieldEncode a where fieldEncoder = field
 instance (HasSchema a, Typeable a) => FieldEncode (Maybe a) where fieldEncoder = optField

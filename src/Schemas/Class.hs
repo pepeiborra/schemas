@@ -29,7 +29,7 @@ import           Schemas.Untyped
 -- -----------------------------------------------------------------------------------
 
 class HasSchema a where
-  schema :: TypedSchemaMu v a
+  schema :: TypedSchema a
 
 instance HasSchema () where
   schema = mempty
@@ -73,22 +73,23 @@ instance  (Typeable a, HasSchema a) => HasSchema (NonEmpty a) where
 instance HasSchema a => HasSchema (Identity a) where
   schema = dimap runIdentity Identity schema
 
-instance Typeable a => HasSchema (SchemaMu a) where
-  schema = mu ( \self -> ( union'
-    [ altWith self "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
-    , altWith self "Array"     $ prism' Array (\case Array x -> Just x ; _ -> Nothing)
+instance HasSchema Schema where
+  schema = named "Schema" $ union'
+    [ alt "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
+    , alt "Array"     $ prism' Array (\case Array x -> Just x ; _ -> Nothing)
     , alt "Enum"      $ prism' Enum (\case Enum x -> Just x ; _ -> Nothing)
-    , altWith (stringMap (fs self)) "Record"    $ prism' Record (\case Record x -> Just x ; _ -> Nothing)
+    , alt "Record"    $ prism' Record (\case Record x -> Just x ; _ -> Nothing)
     , alt "Empty"      _Empty
     , alt "Prim"      $ prism' Prim (\case Prim x -> Just x ; _ -> Nothing)
-    , altWith (list $ unionSchema $ (self)) "Union" _Union
-    , altWith (list $ self) "OneOf"     $ prism' OneOf (\case OneOf x -> Just x ; _ -> Nothing)
-    ] ))
+    , altWith unionSchema "Union" _Union
+    , alt "OneOf"     $ prism' OneOf (\case OneOf x -> Just x ; _ -> Nothing)
+    ]
     where
-      unionSchema self = (record $ (,) <$> field "constructor" fst <*> fieldWith self "schema" snd)
-      fs self =
-        record $
-        Field <$> fieldWith self "schema" fieldSchema
+      unionSchema = list (record $ (,) <$> field "constructor" fst <*> field "schema" snd)
+
+instance HasSchema Field where
+  schema = record $
+        Field <$> field "schema" fieldSchema
               <*> fmap (fromMaybe True) (optField "isRequired" (\x -> if isRequired x then Nothing else Just False))
 
 
@@ -163,9 +164,9 @@ encode = encodeWith schema
 encodeTo :: (HasSchema a, Typeable a) => Schema -> Either [(Trace, Mismatch)] (a -> Value)
 encodeTo = encodeToWith schema
 
--- -- | Encode a value into a finite representation by enforcing a max depth
--- finiteEncode :: forall a. (HasSchema a, Typeable a) => Natural -> a -> Value
--- finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
+-- | Encode a value into a finite representation by enforcing a max depth
+finiteEncode :: forall a. (HasSchema a, Typeable a) => Natural -> a -> Value
+finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
 
 -- | Decode using the default schema.
 decode :: HasSchema a => Value -> Either [(Trace, DecodeError)] a
@@ -176,28 +177,28 @@ decode = decodeWith schema
 decodeFrom :: HasSchema a => Schema -> Either [(Trace, DecodeError)] (Value -> Either [(Trace, DecodeError)] a)
 decodeFrom = decodeFromWith schema
 
--- -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
--- coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
--- coerce = case isSubtypeOf (validatorsFor @sub) (theSchema @sub) (theSchema @sup) of
---   Right cast -> Just . cast
---   _          -> const Nothing
+-- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
+coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
+coerce = case isSubtypeOf (validatorsFor @sub) (theSchema @sub) (theSchema @sup) of
+  Right cast -> Just . cast
+  _          -> const Nothing
 
 -- | @field name get@ introduces a field with the default schema for the type
-field :: HasSchema a => Text -> (from -> a) -> RecordFieldsMu v from a
+field :: HasSchema a => Text -> (from -> a) -> RecordFields from a
 field = fieldWith schema
 
 -- | @optField name get@ introduces an optional field with the default schema for the type
-optField :: forall a from v. (HasSchema a, Typeable a) => Text -> (from -> Maybe a) -> RecordFieldsMu v from (Maybe a)
+optField :: forall a from. (HasSchema a, Typeable a) => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
 optField n get = optFieldWith (lmap get $ liftJust (schema @a)) n
 
 -- | @optFieldEither name get@ introduces an optional field with the default schema for the type
 optFieldEither
-    :: forall a from e v
+    :: forall a from e
      . (Typeable a, HasSchema a)
     => Text
     -> (from -> Either e a)
     -> e
-    -> RecordFieldsMu v from (Either e a)
+    -> RecordFields from (Either e a)
 optFieldEither n x e = optFieldGeneral (lmap x $ liftRight (schema)) n (Left e)
 
 -- | @alt name prism@ introduces a discriminated union alternative with the default schema

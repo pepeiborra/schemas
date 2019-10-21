@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE DeriveGeneric       #-}
@@ -32,7 +34,7 @@ import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
 import           Data.Text                  (Text, pack, unpack)
 import           Data.Typeable
-import           GHC.Exts                   (IsList (..))
+import           GHC.Exts                   (IsList (..), IsString(..))
 import           GHC.Generics               (Generic)
 import           Numeric.Natural
 import           Prelude                    hiding (lookup)
@@ -45,24 +47,26 @@ import           Text.Show.Functions        ()
 -- Schemas
 -- --------------------------------------------------------------------------------
 
+newtype SchemaName = SchemaName String
+  deriving newtype (Eq, IsString, Show)
+
 -- | A schema for untyped data, such as JSON or XML.
 --
 --   * introduction forms: 'extractSchema', 'theSchema', 'mempty'
 --   * operations: 'isSubtypeOf', 'versions', 'coerce', 'validate'
 --   * composition: '(<>)'
-data SchemaMu a
-  = Array (SchemaMu a)
-  | StringMap (SchemaMu a)
+data Schema
+  = Array Schema
+  | StringMap Schema
   | Enum   (NonEmpty Text)
-  | Record (HashMap Text (Field a))
-  | OneOf (NonEmpty (SchemaMu a))   -- ^ Decoding works for all alternatives, encoding only for one
+  | Record (HashMap Text Field)
+  | OneOf (NonEmpty Schema)   -- ^ Decoding works for all alternatives, encoding only for one
   | Prim Text                     -- ^ Carries the name of primitive type
-  | Var a
-  | Mu (a -> NonEmpty (SchemaMu a))          -- ^ Recursive binder with non-determinism
-  deriving (Generic, Show)
+  | Named SchemaName Schema
+  deriving (Eq, Generic, Show)
 
-instance Monoid (SchemaMu a) where mempty = Empty
-instance Semigroup (SchemaMu a) where
+instance Monoid Schema where mempty = Empty
+instance Semigroup Schema where
   Empty <> x    = x
   x <> Empty    = x
   OneOf aa <> b = OneOf (aa <> [b])
@@ -72,32 +76,30 @@ instance Semigroup (SchemaMu a) where
 showSchema :: Schema -> String
 showSchema _ = "TBD" -- TODO
 
-showSchemaLayer :: SchemaMu a -> String
+showSchemaLayer :: Schema -> String
 showSchemaLayer _ = "TBD" -- TODO
 
-type Schema = forall a . SchemaMu a
-
-data Field a = Field
-  { fieldSchema :: SchemaMu a
+data Field = Field
+  { fieldSchema :: Schema
   , isRequired  :: Bool -- ^ defaults to True
   }
-  deriving (Generic)
+  deriving (Eq, Generic)
 
-instance Show a => Show (Field a) where
+instance Show Field where
   showsPrec p (Field sc True)  = showsPrec p sc
   showsPrec p (Field sc False) = ("?" ++) . showsPrec p sc
 
-fieldSchemaL :: Applicative f => ((SchemaMu a) -> f (SchemaMu a)) -> (Field a) -> f (Field a)
+fieldSchemaL :: Applicative f => (Schema -> f Schema) -> Field -> f Field
 fieldSchemaL f Field{..} = Field <$> f fieldSchema <*> pure isRequired
 
-pattern Empty :: (SchemaMu a)
+pattern Empty :: Schema
 pattern Empty <- Record [] where Empty = Record []
 
-pattern Union :: NonEmpty (Text, (SchemaMu a)) -> (SchemaMu a)
+pattern Union :: NonEmpty (Text, Schema) -> Schema
 pattern Union alts <- (preview _Union -> Just alts) where
   Union alts = review _Union alts
 
-_Empty :: Prism' (SchemaMu a) ()
+_Empty :: Prism' Schema ()
 _Empty = prism' build match
   where
     build () = Record []
@@ -105,7 +107,7 @@ _Empty = prism' build match
     match (Record []) = Just ()
     match _           = Nothing
 
-_Union :: Prism' (SchemaMu a) (NonEmpty (Text, (SchemaMu a)))
+_Union :: Prism' Schema (NonEmpty (Text, Schema))
 _Union = prism' build match
   where
     build = OneOf . fmap (\(n,sc) -> Record [(n, Field sc True)])
@@ -113,19 +115,19 @@ _Union = prism' build match
     match (OneOf scc) = traverse viewAlt scc
     match _           = Nothing
 
-    viewAlt :: (SchemaMu a) -> Maybe (Text, (SchemaMu a))
+    viewAlt :: Schema -> Maybe (Text, Schema)
     viewAlt (Record [(n,Field sc True)]) = Just (n, sc)
     viewAlt _                            = Nothing
 
 -- --------------------------------------------------------------------------------
 -- Finite schemes
 
--- | Ensure that a '(SchemaMu a)' is finite by enforcing a max depth.
+-- | Ensure that a 'Schema' is finite by enforcing a max depth.
 --   The result is guaranteed to be a supertype of the input.
 finite :: Natural -> Schema -> Schema
 finite n x = (go n (x))
  where
-  go :: Natural -> (SchemaMu a) -> (SchemaMu a)
+  go :: Natural -> Schema -> Schema
   go 0 _ = Empty
   go d (Record    opts) = Record $ fromList $ mapMaybe
     (\(fieldname, Field sc isOptional) -> case go (max 0 (pred d)) sc of
@@ -157,7 +159,7 @@ data Mismatch
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
   | InvalidConstructor { name :: Text}
   | InvalidUnionValue  { contents :: Value}
-  | SchemaMismatch     {a, b :: String}
+  | SchemaMismatch     {a, b :: Schema}
   | ValueMismatch      {expected :: String, got :: Value}
   | EmptyAllOf
   | PrimValidatorMissing { name :: Text }
@@ -165,10 +167,11 @@ data Mismatch
   | PrimMismatch {have, want :: Text}
   | InvalidChoice{choiceNumber :: Int}
   | TryFailed { name :: Text }
+  | UnusedFields [[Text]]
   | AllAlternativesFailed { mismatches :: [(Trace,Mismatch)]}
   | UnexpectedAllOf
   | NoMatches
-  deriving (Show, Typeable)
+  deriving (Eq, Show, Typeable)
 
 instance Exception Mismatch
 
@@ -177,12 +180,12 @@ type ValidatePrim = Value -> Maybe Text
 
 -- | Structural validation of a JSON value against a schema
 --   Ignores extraneous fields in records
-validate :: Validators -> SchemaMu a -> Value -> [(Trace, Mismatch)]
+validate :: Validators -> Schema -> Value -> [(Trace, Mismatch)]
 validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept (go [] sc v) where
   failWith :: Trace -> Mismatch -> Except [(Trace, Mismatch)] ()
   failWith ctx e = throwE [(ctx, e)]
 
-  go :: Trace -> (SchemaMu a) -> Value -> Except [(Trace, Mismatch)] ()
+  go :: Trace -> Schema -> Value -> Except [(Trace, Mismatch)] ()
   go ctx (Prim n) x = case Map.lookup n validators of
     Nothing -> failWith ctx (PrimValidatorMissing n)
     Just v -> case v x of
@@ -229,7 +232,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] (sup) (sub)
   failWith ctx m = throwE [(reverse ctx, m)]
 
         -- TODO go: fix confusing order of arguments
-  go :: Trace -> (SchemaMu a) -> (SchemaMu a) -> Except [(Trace,Mismatch)] (Value -> Value)
+  go :: Trace -> Schema -> Schema -> Except [(Trace,Mismatch)] (Value -> Value)
 --  go _ sup sub | pTraceShow ("isSubtypeOf", sub, sup) False = undefined
   go _tx Empty         _         = pure $ const emptyValue
   go _tx (Array     _) Empty     = pure $ const (A.Array [])
@@ -251,7 +254,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] (sup) (sub)
       Just xx -> failWith ctx $ MissingEnumChoices xx
   go ctx (Union opts) (Union opts') = do
     ff <- forM opts' $ \(n, sc) -> do
-      sc' :: SchemaMu a <- maybe (failWith ctx $ InvalidConstructor n) return $ lookup n (toList opts)
+      sc' :: Schema <- maybe (failWith ctx $ InvalidConstructor n) return $ lookup n (toList opts)
       f   <- go (n : ctx) sc sc'
       return $ over (_Object . ix n) f
     return (foldr (.) id ff)
@@ -280,7 +283,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] (sup) (sub)
     f <- go ctx a b
     pure (A.Array . fromList . (: []) . f)
   -- go _tx a b | a == b  = pure id
-  go ctx a b           = failWith ctx (SchemaMismatch (showSchemaLayer a) (showSchemaLayer b))
+  go ctx a b           = failWith ctx (SchemaMismatch a b)
 
 -- ----------------------------------------------
 -- Utils

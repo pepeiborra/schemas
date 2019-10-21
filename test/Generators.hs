@@ -17,14 +17,14 @@ import           Numeric.Natural
 import           Schemas
 import           Test.QuickCheck
 
-hasOneOf :: SchemaMu a -> Bool
+hasOneOf :: Schema -> Bool
 hasOneOf (Array sc)     = hasOneOf sc
 hasOneOf (StringMap sc) = hasOneOf sc
 hasOneOf (Record ff)    = any (hasOneOf . fieldSchema) ff
 hasOneOf (OneOf _)      = True
 hasOneOf _              = False
 
-instance Arbitrary (SchemaMu a) where
+instance Arbitrary Schema where
   arbitrary = sized genSchema
   shrink (Record fields) =
     [Record [(n,Field sc' req)] | (n,Field sc req) <- toList fields, sc' <- shrink sc]
@@ -53,17 +53,14 @@ newtype Sealed f = Sealed {unseal :: forall a. f a}
 overSealed :: (forall a . f a -> g a) -> Sealed f -> Sealed g
 overSealed f (Sealed x) = Sealed (f x)
 
-instance HasSchema (Sealed SchemaMu) where schema = dimap unseal Sealed schema
-genSealed :: Int -> Gen (Sealed SchemaMu)
-
-genSchema ::  Int -> Gen (Sealed SchemaMu)
-genSealed 0 = elements [Sealed Empty, Sealed(Prim "A"), Sealed(Prim "B")]
+genSchema ::  Int -> Gen Schema
+genSchema 0 = elements [Empty, Prim "A", Prim "B"]
 genSchema n = frequency
   [ (10,) $ Record <$> do
       nfields <- choose (1,2)
       fieldArgs <- replicateM nfields (scale (`div` succ nfields) arbitrary)
       return $ fromList (zipWith (\n (sc,a) -> (n, Field sc a)) fieldNames fieldArgs)
-  , (10,) $ overSealed Array <$> scale(`div` 4) arbitrary
+  , (10,) $ Array <$> scale(`div` 4) arbitrary
   , (10,) $ Enum   <$> do
       n <- choose (1,2)
       return $ fromList $ take n ["Enum1", "Enum2"]

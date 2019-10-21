@@ -90,11 +90,10 @@ module Schemas
   , DecodeError(..)
   -- * working with recursive schemas
   , finiteValue
-  -- , finiteEncode
+  , finiteEncode
 
   -- * Untyped schemas
-  , Schema
-  , SchemaMu(.., Empty, Union)
+  , Schema(.., Empty, Union)
   , showSchema
   , Field(..)
   , _Empty
@@ -106,7 +105,7 @@ module Schemas
   , Mismatch(..)
   , Trace
   , isSubtypeOf
-  -- , coerce
+  , coerce
   , finite
   , validate
   , validatorsFor

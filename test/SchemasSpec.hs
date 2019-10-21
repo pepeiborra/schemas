@@ -211,7 +211,7 @@ asumEither = Data.Coerce.coerce asumExcept
     asumExcept :: NE.NonEmpty (Except e a) -> Except e a
     asumExcept = asum
 
-makeField :: a -> SchemaMu v -> Bool -> (a, Field v)
+makeField :: a -> Schema -> Bool -> (a, Field)
 makeField n t isReq = (n, Field t isReq)
 
 constructor' :: a -> b -> (a, b)
@@ -221,4 +221,4 @@ prim :: Schema
 prim = Prim "A"
 
 primValidators :: Validators
-primValidators = validatorsFor @(SchemaMu (), Double, Int, Bool)
+primValidators = validatorsFor @(Schema, Double, Int, Bool)
