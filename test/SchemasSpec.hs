@@ -1,34 +1,35 @@
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ImpredicativeTypes  #-}
+{-# LANGUAGE OverloadedLists     #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE OverloadedLists   #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications    #-}
 module SchemasSpec where
 
-import Control.Exception
-import Control.Monad.Trans.Except
-import qualified Data.Aeson as A
-import Data.Coerce
-import Data.Either
-import qualified Data.List.NonEmpty as NE
-import Data.Foldable
-import Data.Functor.Identity
-import Data.Maybe
-import Data.Typeable
-import Generators
-import Person
-import Person2
-import Person3
-import Person4
-import Schemas
-import Schemas.Untyped (Validators)
-import System.Timeout
-import Test.Hspec
-import Test.Hspec.Runner
-import Test.Hspec.QuickCheck
-import Test.QuickCheck
-import Text.Show.Functions ()
+import           Control.Exception
+import           Control.Monad.Trans.Except
+import qualified Data.Aeson                 as A
+import           Data.Coerce
+import           Data.Either
+import           Data.Foldable
+import           Data.Functor.Identity
+import qualified Data.List.NonEmpty         as NE
+import           Data.Maybe
+import           Data.Typeable
+import           Generators
+import           Person
+import           Person2
+import           Person3
+import           Person4
+import           Schemas
+import           Schemas.Untyped            (Validators)
+import           System.Timeout
+import           Test.Hspec
+import           Test.Hspec.QuickCheck
+import           Test.Hspec.Runner
+import           Test.QuickCheck
+import           Text.Show.Functions        ()
 
 main :: IO ()
 main = hspecWith defaultConfig{configQuickCheckMaxSuccess = Just 10000} spec
@@ -181,11 +182,11 @@ schemaSpec sc ex = do
 shouldBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldBeSubtypeOf a b = case isSubtypeOf primValidators a b of
   Right _ -> pure ()
-  _       -> expectationFailure $ show a <> " should be a subtype of " <> show b
+  _       -> expectationFailure $ showSchema a <> " should be a subtype of " <> showSchema b
 
 shouldNotBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldNotBeSubtypeOf a b = case isSubtypeOf primValidators a b of
-  Right _  -> expectationFailure $ show a <> " should not be a subtype of " <> show b
+  Right _  -> expectationFailure $ showSchema a <> " should not be a subtype of " <> showSchema b
   _ -> pure ()
 
 shouldLoop :: (Show a) => IO a -> Expectation
@@ -210,7 +211,7 @@ asumEither = Data.Coerce.coerce asumExcept
     asumExcept :: NE.NonEmpty (Except e a) -> Except e a
     asumExcept = asum
 
-makeField :: a -> Schema -> Bool -> (a, Field)
+makeField :: a -> SchemaMu v -> Bool -> (a, Field v)
 makeField n t isReq = (n, Field t isReq)
 
 constructor' :: a -> b -> (a, b)
@@ -220,4 +221,4 @@ prim :: Schema
 prim = Prim "A"
 
 primValidators :: Validators
-primValidators = validatorsFor @(Schema, Double, Int, Bool)
+primValidators = validatorsFor @(SchemaMu (), Double, Int, Bool)

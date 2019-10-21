@@ -93,8 +93,10 @@ module Schemas
   -- , finiteEncode
 
   -- * Untyped schemas
-  , Schema(.., Empty, Union)
-  ,  Field(..)
+  , Schema
+  , SchemaMu(.., Empty, Union)
+  , showSchema
+  , Field(..)
   , _Empty
   , _Union
   -- ** Extraction

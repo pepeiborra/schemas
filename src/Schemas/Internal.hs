@@ -48,8 +48,6 @@ import           Schemas.Untyped
 
 import Unsafe.Coerce
 
-import Debug.Pretty.Simple
-
 -- Typed schemas
 -- --------------------------------------------------------------------------------
 
@@ -323,11 +321,12 @@ union' args = union $ args <&> \(UnionTag c p sc) -> (c, liftPrism c p sc)
 -- Schema extraction from a TypedSchema
 
 -- | Extract an untyped schema that can be serialized
-extractSchema :: TypedSchemaFlex from a -> NonEmpty (Sealed Schema)
+extractSchema :: TypedSchemaFlex from a -> NonEmpty Schema
 extractSchema s =
+  -- TODO remove unsafeCoerce
   fmap (\x -> unsafeCoerce {- Propagating existentialness is hard-} x) (extractSchemaMu s)
   where
-    extractSchemaMu :: TypedSchemaFlexMu a from to -> NonEmpty (Schema a)
+    extractSchemaMu :: TypedSchemaFlexMu a from to -> NonEmpty (SchemaMu a)
     extractSchemaMu (TVar v)         = pure $ Var v
     extractSchemaMu (TMu  f)         = pure $ Mu (extractSchemaMu . f)
     extractSchemaMu (TPrim n _ _)    = pure $ Prim n
@@ -386,9 +385,9 @@ type TypedSchemaVarEncode a = (Int, Except E (a -> Except E Value))
 mapTypedSchemaVarEncode :: (b -> a) -> TypedSchemaVarEncode a -> TypedSchemaVarEncode b
 mapTypedSchemaVarEncode f = second (fmap (lmap f))
 
-encodeToWith :: (Typeable from) => TypedSchemaFlex from a -> (Sealed Schema) -> Either E (from -> Value)
+encodeToWith :: (Typeable from) => TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
 encodeToWith sc target =
-  (\m -> either (throw . AllAlternativesFailed) id . runExcept . m) <$> runExcept (go 0 [] sc (unseal target))
+  (\m -> either (throw . AllAlternativesFailed) id . runExcept . m) <$> runExcept (go 0 [] sc (target))
  where
   failWith ctx m = throwE [(reverse ctx, m)]
 
@@ -396,17 +395,19 @@ encodeToWith sc target =
     => Int
     -> Trace
     -> TypedSchemaFlexMu (TypedSchemaVarEncode Dynamic) from a
-    -> Schema Int
+    -> SchemaMu Int
     -> Except E (from -> Except E Value)
   -- go _ _ _  t | pTraceShow (t) False = undefined
-  go _ _tx (TVar ~(i,enc)) (Var v') | i == v' = do
-    -- TODO understand why this "boxing" works and explain it
-     let Right res = runExcept $ fmap (lmap toDyn) enc
-     return res
-  go i ctx (TMu f) (Mu f') =
-    let sc = NE.head (f' i) -- TODO Assert that there is only one element ?
-        r x = mapTypedSchemaVarEncode (fromJust . fromDynamic) . (\t -> (i, go (succ i) ctx t sc)) . f $ x
-    in lmap toDyn <$> snd (fix r)
+  go _ _tx (TVar (i,enc)) (Var v') | i == v' = do
+    -- TODO understand why this delay is necessary
+     let unsafeDelay = fromRight (error "internal error"). runExcept
+     return $ unsafeDelay $ fmap (lmap toDyn) enc
+  go i ctx (TMu f) (Mu f') = do
+   case f' i of
+     sc :| [] ->
+        let r x = mapTypedSchemaVarEncode (fromJust . fromDynamic) . (\t -> (i, go (succ i) ctx t sc)) . f $ x
+        in lmap toDyn <$> snd (fix r)
+     _ -> error "Internal error"
   go _ _tx TEmpty{} Array{}     = pure $ pure . const (A.Array [])
   go _ _tx TEmpty{} Record{}    = pure $ pure . const (A.Object [])
   go _ _tx TEmpty{} StringMap{} = pure $ pure . const (A.Object [])
@@ -471,8 +472,8 @@ encodeToWith sc target =
   go i ctx sc (Array t) = do
     f <- go i ctx sc t
     return $ A.Array . fromList . (: []) <.> f
-  go i _tx _     Empty = pure $ pure . const emptyValue
-  go i ctx other src   = failWith ctx (SchemaMismatch {-(NE.head $ extractSchema other)-} (show src) (show src))
+  go _ _tx _     Empty = pure $ pure . const emptyValue
+  go _ ctx _ther src   = failWith ctx (SchemaMismatch "<schema>" (show src))
 
 -- --------------------------------------------------------------------------
 -- Decoding
@@ -517,13 +518,13 @@ decodeWith sc v = decoder >>= ($ v)
  where
    decoder = decodeFromWith sc (NE.head $ extractSchema sc)
 
-decodeFromWith :: TypedSchemaFlex from a -> (Sealed Schema) -> Either D (Value -> Either D a)
+decodeFromWith :: TypedSchemaFlex from a -> Schema -> Either D (Value -> Either D a)
 -- TODO merge runSchema and decodeFromWith ?
-decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc (unseal source))
+decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc (source))
   where
     failWith ctx e = throwE [(reverse ctx, DecodeError e)]
 
-    go :: Trace -> TypedSchemaFlexMu v from a -> Schema Int -> Except D (Value -> Except D a)
+    go :: Trace -> TypedSchemaFlexMu v from a -> SchemaMu Int -> Except D (Value -> Except D a)
     go _tx (TEmpty a) _ = pure $ const $ pure a
     go ctx (TEnum optsTarget _) s@(Enum optsSource) =
       case NE.nonEmpty $ NE.filter (`notElem` map fst (NE.toList optsTarget)) (optsSource) of
@@ -591,7 +592,7 @@ decodeFromWith sc source = (runExcept .) <$> runExcept (go [] sc (unseal source)
                       Just v  -> f v)
 
     go ctx s     (OneOf xx) = asum $ fmap (go ctx s) xx
-    go ctx s            src = failWith ctx (SchemaMismatch {-(NE.head $ extractSchemaMu s)-} (show src) (show src))
+    go ctx _            src = failWith ctx (SchemaMismatch "<schema>" (show src))
 
 
 -- ----------------------------------------------

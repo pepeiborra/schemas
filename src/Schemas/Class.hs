@@ -16,7 +16,6 @@ import           Data.HashMap.Strict  (HashMap)
 import qualified Data.HashMap.Strict  as Map
 import           Data.HashSet         (HashSet)
 import           Data.List.NonEmpty   (NonEmpty (..))
-import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
 import           Data.Scientific
 import           Data.Text            (Text, pack, unpack)
@@ -74,10 +73,10 @@ instance  (Typeable a, HasSchema a) => HasSchema (NonEmpty a) where
 instance HasSchema a => HasSchema (Identity a) where
   schema = dimap runIdentity Identity schema
 
-instance Typeable a => HasSchema (Schema a) where
+instance Typeable a => HasSchema (SchemaMu a) where
   schema = mu ( \self -> ( union'
-    [ altWith ((self)) "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
-    , altWith ((self)) "Array"     $ prism' Array (\case Array x -> Just x ; _ -> Nothing)
+    [ altWith self "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
+    , altWith self "Array"     $ prism' Array (\case Array x -> Just x ; _ -> Nothing)
     , alt "Enum"      $ prism' Enum (\case Enum x -> Just x ; _ -> Nothing)
     , altWith (stringMap (fs self)) "Record"    $ prism' Record (\case Record x -> Just x ; _ -> Nothing)
     , alt "Empty"      _Empty
@@ -148,8 +147,8 @@ instance Key String where
 -- HasSchema aware combinators
 -- -----------------------------------------------------------------------------------
 -- | Extract the default 'Schema' for a type
-theSchema :: forall a . HasSchema a => Sealed Schema
-theSchema = NE.head $ extractSchema (schema @a)
+theSchema :: forall a . HasSchema a => Schema
+theSchema = case extractSchema (schema @a) of x :| _ -> x
 
 validatorsFor :: forall a . HasSchema a => Validators
 validatorsFor = extractValidators (schema @a)
@@ -161,7 +160,7 @@ encode = encodeWith schema
 -- | Attempt to encode to the target schema using the default schema.
 --   First encodes using the default schema, then computes a coercion
 --   applying 'isSubtypeOf', and then applies the coercion to the encoded data.
-encodeTo :: (HasSchema a, Typeable a) => Sealed Schema -> Either [(Trace, Mismatch)] (a -> Value)
+encodeTo :: (HasSchema a, Typeable a) => Schema -> Either [(Trace, Mismatch)] (a -> Value)
 encodeTo = encodeToWith schema
 
 -- -- | Encode a value into a finite representation by enforcing a max depth
@@ -174,7 +173,7 @@ decode = decodeWith schema
 
 -- | Apply `isSubtypeOf` to construct a coercion from the source schema to the default schema,
 --   apply the coercion to the data, and attempt to decode using the default schema.
-decodeFrom :: HasSchema a => Sealed Schema -> Either [(Trace, DecodeError)] (Value -> Either [(Trace, DecodeError)] a)
+decodeFrom :: HasSchema a => Schema -> Either [(Trace, DecodeError)] (Value -> Either [(Trace, DecodeError)] a)
 decodeFrom = decodeFromWith schema
 
 -- -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
