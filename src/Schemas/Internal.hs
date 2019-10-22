@@ -511,17 +511,17 @@ decodeFromWith sc source = (runExcept .) <$> runExcept (go [] [] sc (source))
         Just xx -> failWith ctx $ MissingEnumChoices xx
         Nothing -> pure $ \case
           A.String x -> maybe (failWith ctx (InvalidEnumValue x (fst <$> optsTarget))) pure $ lookup x optsTarget
-          other -> failWith ctx (ValueMismatch (show s) other)
+          other -> failWith ctx (ValueMismatch s other)
     go env ctx (TArray sc tof _) s@(Array src) = do
       f <- go env ("[]" : ctx) sc src
       return $ \case
         A.Array x -> tof <$> traverse f x
-        other -> failWith ctx (ValueMismatch (show s) other)
+        other -> failWith ctx (ValueMismatch s other)
     go env ctx (TMap sc tof _) s@(StringMap src) = do
       f <- go env ("Map" : ctx) sc src
       return $ \case
         A.Object x -> tof <$> traverse f x
-        other -> failWith ctx (ValueMismatch (show s) other)
+        other -> failWith ctx (ValueMismatch s other)
     go _nv ctx (TPrim n tof _) (Prim src)
       | n /= src = failWith ctx (PrimMismatch n src)
       | otherwise = return $ \x -> case tof x of

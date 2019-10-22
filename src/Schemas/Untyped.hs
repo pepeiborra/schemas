@@ -36,7 +36,6 @@ import           Data.Text                  (Text, pack, unpack)
 import           Data.Typeable
 import           GHC.Exts                   (IsList (..), IsString(..))
 import           GHC.Generics               (Generic)
-import           Numeric.Natural
 import           Prelude                    hiding (lookup)
 import           Text.Read
 import           Text.Show.Functions        ()
@@ -72,12 +71,6 @@ instance Semigroup Schema where
   OneOf aa <> b = OneOf (aa <> [b])
   b <> OneOf aa = OneOf ([b] <> aa)
   a <> b        = OneOf [a,b]
-
-showSchema :: Schema -> String
-showSchema _ = "TBD" -- TODO
-
-showSchemaLayer :: Schema -> String
-showSchemaLayer _ = "TBD" -- TODO
 
 data Field = Field
   { fieldSchema :: Schema
@@ -119,33 +112,6 @@ _Union = prism' build match
     viewAlt (Record [(n,Field sc True)]) = Just (n, sc)
     viewAlt _                            = Nothing
 
--- --------------------------------------------------------------------------------
--- Finite schemes
-
--- | Ensure that a 'Schema' is finite by enforcing a max depth.
---   The result is guaranteed to be a supertype of the input.
-finite :: Natural -> Schema -> Schema
-finite n x = (go n (x))
- where
-  go :: Natural -> Schema -> Schema
-  go 0 _ = Empty
-  go d (Record    opts) = Record $ fromList $ mapMaybe
-    (\(fieldname, Field sc isOptional) -> case go (max 0 (pred d)) sc of
-      Empty -> Nothing
-      sc'   -> Just (fieldname, Field sc' isOptional)
-    )
-    (Map.toList opts)
-  go d (Array     sc  ) = Array (go (max 0 (pred d)) sc)
-  go d (StringMap sc  ) = StringMap (go (max 0 (pred d)) sc)
-  go d (OneOf     opts) = let d' = max 0 (pred d) in OneOf (go d' <$> opts)
-  go _ other            = other
-
--- | Ensure that a 'Value' is finite by enforcing a max depth in a schema preserving way
-finiteValue :: Validators -> Natural -> Schema -> Value -> Value
-finiteValue validators d sc
-  | Right cast <- isSubtypeOf validators sc (finite d sc) = cast
-  | otherwise = error "bug in isSubtypeOf"
-
 -- ------------------------------------------------------------------------------------------------------
 -- Validation
 
@@ -160,7 +126,7 @@ data Mismatch
   | InvalidConstructor { name :: Text}
   | InvalidUnionValue  { contents :: Value}
   | SchemaMismatch     {a, b :: Schema}
-  | ValueMismatch      {expected :: String, got :: Value}
+  | ValueMismatch      {expected :: Schema, got :: Value}
   | EmptyAllOf
   | PrimValidatorMissing { name :: Text }
   | PrimError {name, primError :: Text}
@@ -214,7 +180,7 @@ validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept
           (toList scc)
       )
       alts
-  go ctx a           b = failWith ctx (ValueMismatch (showSchemaLayer a) b)
+  go ctx a           b = failWith ctx (ValueMismatch a b)
 
 -- ------------------------------------------------------------------------------------------------------
 -- Subtype relation
@@ -226,39 +192,50 @@ validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept
 -- > Record [("a", Bool)] `isSubtypeOf` Record [("a", Number)]
 --   Nothing
 isSubtypeOf :: Validators -> Schema -> Schema -> Either [(Trace, Mismatch)] (Value -> Value)
-isSubtypeOf validators sub sup = runExcept $ go [] (sup) (sub)
+isSubtypeOf validators sub sup = runExcept $ go [] [] sup sub
  where
   failWith :: Trace -> Mismatch -> Except [(Trace, Mismatch)] b
   failWith ctx m = throwE [(reverse ctx, m)]
 
         -- TODO go: fix confusing order of arguments
-  go :: Trace -> Schema -> Schema -> Except [(Trace,Mismatch)] (Value -> Value)
+  go
+    :: [(SchemaName, Except [(Trace, Mismatch)] (Value -> Value))]
+    -> Trace
+    -> Schema
+    -> Schema
+    -> Except [(Trace, Mismatch)] (Value -> Value)
 --  go _ sup sub | pTraceShow ("isSubtypeOf", sub, sup) False = undefined
-  go _tx Empty         _         = pure $ const emptyValue
-  go _tx (Array     _) Empty     = pure $ const (A.Array [])
-  go _tx (Record    _) Empty     = pure $ const emptyValue
-  go _tx (StringMap _) Empty     = pure $ const emptyValue
-  go _tx OneOf{}       Empty     = pure $ const emptyValue
-  go ctx (Prim      a) (Prim b ) = do
+  go env ctx (Named a sa) (Named b sb) | a == b =
+    case lookup a env of
+      Just sol -> sol
+      Nothing ->
+        let sol = go ((a,sol) : env) ctx sa sb
+        in sol
+  go _nv _tx Empty         _         = pure $ const emptyValue
+  go _nv _tx (Array     _) Empty     = pure $ const (A.Array [])
+  go _nv _tx (Record    _) Empty     = pure $ const emptyValue
+  go _nv _tx (StringMap _) Empty     = pure $ const emptyValue
+  go _nv _tx OneOf{}       Empty     = pure $ const emptyValue
+  go _nv ctx (Prim      a) (Prim b ) = do
     unless (a == b) $ failWith ctx (PrimMismatch b a)
     pure id
-  go ctx (Array a)     (Array b) = do
-    f <- go ("[]" : ctx) a b
+  go env ctx (Array a)     (Array b) = do
+    f <- go env ("[]" : ctx) a b
     pure $ over (_Array . traverse) f
-  go ctx (StringMap a) (StringMap b) = do
-    f <- go ("Map" : ctx) a b
+  go env ctx (StringMap a) (StringMap b) = do
+    f <- go env ("Map" : ctx) a b
     pure $ over (_Object . traverse) f
-  go ctx (Enum opts) (Enum opts') =
+  go _nv ctx (Enum opts) (Enum opts') =
     case NE.nonEmpty $ NE.filter (`notElem` opts) opts' of
       Nothing -> pure id
       Just xx -> failWith ctx $ MissingEnumChoices xx
-  go ctx (Union opts) (Union opts') = do
+  go env ctx (Union opts) (Union opts') = do
     ff <- forM opts' $ \(n, sc) -> do
       sc' :: Schema <- maybe (failWith ctx $ InvalidConstructor n) return $ lookup n (toList opts)
-      f   <- go (n : ctx) sc sc'
+      f   <- go env (n : ctx) sc sc'
       return $ over (_Object . ix n) f
     return (foldr (.) id ff)
-  go ctx (Record opts) (Record opts') = do
+  go env ctx (Record opts) (Record opts') = do
     forM_ (Map.toList opts) $ \(n, f) ->
       unless (not (isRequired f) || Map.member n opts') $
         failWith ctx $ MissingRecordField n
@@ -269,21 +246,21 @@ isSubtypeOf validators sub sup = runExcept $ go [] (sup) (sub)
         Just f@(Field sc _) -> do
           unless (not (isRequired f) || isRequired f') $
             failWith ctx $ OptionalRecordField n'
-          witness <- go (n' : ctx) sc sc'
+          witness <- go env (n' : ctx) sc sc'
           pure $ over (_Object . ix n') witness
     return (foldr (.) id ff)
-  go ctx sup (OneOf [sub]) = go ctx sup sub
-  go ctx sup (OneOf sub  ) = do
-    alts <- traverse (\sc -> (sc, ) <$> go ctx sup sc) sub
+  go env ctx sup (OneOf [sub]) = go env ctx sup sub
+  go env ctx sup (OneOf sub  ) = do
+    alts <- traverse (\sc -> (sc, ) <$> go env ctx sup sc) sub
     return $ \v -> head $ mapMaybe
       (\(sc, f) -> if null (validate validators sc v) then Just (f v) else Nothing)
       (toList alts)
-  go ctx (OneOf sup) sub = asum $ fmap (\x -> go ctx x sub) sup
-  go ctx (Array a) b = do
-    f <- go ctx a b
+  go env ctx (OneOf sup) sub = asum $ fmap (\x -> go env ctx x sub) sup
+  go env ctx (Array a) b = do
+    f <- go env ctx a b
     pure (A.Array . fromList . (: []) . f)
   -- go _tx a b | a == b  = pure id
-  go ctx a b           = failWith ctx (SchemaMismatch a b)
+  go _nv ctx a b           = failWith ctx (SchemaMismatch a b)
 
 -- ----------------------------------------------
 -- Utils

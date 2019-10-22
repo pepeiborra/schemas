@@ -23,7 +23,8 @@ data Person3 = Person3
   deriving (Eq, Show)
 
 instance HasSchema Person3 where
-  schema = record
+  schema  = named "Person3"
+          $ record
           $ Person3 <$> field "name" Person3.name
                     <*> field "age" Person3.age
                     <*> field "addresses" Person3.addresses

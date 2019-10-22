@@ -44,14 +44,9 @@ spec = do
         `shouldThrow` \(_ :: SomeException) -> True
       fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
         `shouldBe` A.Object []
-  describe "finite" $ do
+  describe "isSubtypeOf" $ do
     it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       sc `shouldBeSubtypeOf` sc
-    it "always produces a supertype (in absence of OneOf)" $
-      forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
-      forAll arbitrary $ \(SmallNatural size) ->
-      isRight $ isSubtypeOf primValidators sc (finite size sc)
-  describe "isSubtypeOf" $ do
     it "subtypes can add fields" $ do
       Record [makeField "a" prim True, makeField "def" prim True]
         `shouldBeSubtypeOf` Record [makeField "def" prim True]
@@ -102,9 +97,6 @@ spec = do
           encoder_p2_to_p4 = encodeTo person4_vPerson2
           encoder_p2v0 = encodeTo person2_v0
           encoder_p3v0 = encodeTo @Person3 person3_v0
-    describe "Schemas" $ do
-      prop "finite(schema @Schema) is a supertype of (schema @Schema)" $ \(SmallNatural n) ->
-        theSchema @Schema `shouldBeSubtypeOf` finite n (theSchema @Schema)
     describe "Person" $ do
       schemaSpec schema pepe
     describe "Person2" $ do
@@ -124,10 +116,8 @@ spec = do
         -- shouldBeAbleToEncode @Person  (extractSchema @Person2 schema)
         shouldBeAbleToDecode @Person2 (extractSchema @Person schema)
     describe "Person3" $ do
-      it "cannot compute an encoder for Person3 (infinite schema)" $
-        shouldLoop $ evaluate encoder_p3v0
-      it "finiteEncode works as expected" $ shouldLoop $ evaluate $ A.encode
-        (finiteEncode 4 laura3)
+      it "can compute an encoder for Person3 (circular schema)" $
+        shouldNotLoop $ evaluate encoder_p3v0
     describe "Person4" $ do
       schemaSpec schema pepe4
       let encoded_pepe4 = fromRight undefined encoder_p4v0 pepe4
@@ -137,8 +127,8 @@ spec = do
       it "can compute an encoder for Person4" $ do
         shouldNotLoop $ evaluate encoder_p4v0
         encoder_p4v0 `shouldSatisfy` isRight
-      it "can not compute an encoder for Person3 in finite time" $ do
-        shouldLoop $ evaluate encoder_p3_to_p4
+      it "can compute an encoder for Person3 in finite time" $ do
+        shouldNotLoop $ evaluate encoder_p3_to_p4
       it "can compute an encoder for Person2 in finite time" $ do
         shouldNotLoop $ evaluate encoder_p2_to_p4
       it "can encode a Person4" $ do
@@ -181,11 +171,11 @@ schemaSpec sc ex = do
 shouldBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldBeSubtypeOf a b = case isSubtypeOf primValidators a b of
   Right _ -> pure ()
-  _       -> expectationFailure $ showSchema a <> " should be a subtype of " <> showSchema b
+  _       -> expectationFailure $ show a <> " should be a subtype of " <> show b
 
 shouldNotBeSubtypeOf :: Schema -> Schema -> Expectation
 shouldNotBeSubtypeOf a b = case isSubtypeOf primValidators a b of
-  Right _  -> expectationFailure $ showSchema a <> " should not be a subtype of " <> showSchema b
+  Right _  -> expectationFailure $ show a <> " should not be a subtype of " <> show b
   _ -> pure ()
 
 shouldLoop :: (Show a) => IO a -> Expectation

@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -72,6 +74,8 @@ instance  (HasSchema a) => HasSchema (NonEmpty a) where
 instance HasSchema a => HasSchema (Identity a) where
   schema = dimap runIdentity Identity schema
 
+deriving instance HasSchema SchemaName
+
 instance HasSchema Schema where
   schema = named "Schema" $ union'
     [ alt "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
@@ -82,8 +86,10 @@ instance HasSchema Schema where
     , alt "Prim"      $ prism' Prim (\case Prim x -> Just x ; _ -> Nothing)
     , altWith unionSchema "Union" _Union
     , alt "OneOf"     $ prism' OneOf (\case OneOf x -> Just x ; _ -> Nothing)
+    , altWith namedSchema "Named" $ prism' (uncurry Named) (\case Named s sc -> Just (s,sc) ; _ -> Nothing)
     ]
     where
+      namedSchema = record $ (,) <$> field "name" fst <*> field "schema" snd
       unionSchema = list (record $ (,) <$> field "constructor" fst <*> field "schema" snd)
 
 instance HasSchema Field where
@@ -162,10 +168,6 @@ encode = encodeWith schema
 --   applying 'isSubtypeOf', and then applies the coercion to the encoded data.
 encodeTo :: (HasSchema a) => Schema -> Either [(Trace, Mismatch)] (a -> Value)
 encodeTo = encodeToWith schema
-
--- | Encode a value into a finite representation by enforcing a max depth
-finiteEncode :: forall a. (HasSchema a) => Natural -> a -> Value
-finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
 
 -- | Decode using the default schema.
 decode :: HasSchema a => Value -> Either [(Trace, DecodeError)] a
