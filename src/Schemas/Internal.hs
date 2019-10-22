@@ -26,7 +26,6 @@ import           Data.Aeson                 (Value)
 import qualified Data.Aeson                 as A
 import           Data.Biapplicative
 import           Data.Coerce
-import           Data.Dynamic
 import           Data.Either
 import           Data.Foldable              (asum)
 import           Data.Functor.Compose
@@ -45,7 +44,6 @@ import           Data.Void
 import           GHC.Exts                   (IsList (..))
 import           Prelude                    hiding (lookup)
 import           Schemas.Untyped
-import           Type.Reflection
 
 import Unsafe.Coerce
 
@@ -61,10 +59,10 @@ import Unsafe.Coerce
 --   * composition: 'dimap', 'union', 'stringMap', 'liftPrism'
 --
 data TypedSchemaFlex from a where
-  TNamed :: Typeable from' => SchemaName -> TypedSchemaFlex from' a' -> (a' -> a) -> (from -> from') -> TypedSchemaFlex from a
+  TNamed :: SchemaName -> TypedSchemaFlex from' a' -> (a' -> a) -> (from -> from') -> TypedSchemaFlex from a
   TEnum  :: (NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlex from a
-  TArray :: Typeable b => TypedSchemaFlex b b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
-  TMap   :: (Typeable b) => TypedSchemaFlex b b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
+  TArray :: TypedSchemaFlex b b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
+  TMap   :: TypedSchemaFlex b b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
   -- | Encoding and decoding support all alternatives
   TAllOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
   -- | Decoding from all alternatives, but encoding only to one
@@ -74,12 +72,12 @@ data TypedSchemaFlex from a where
   -- TTry _ is used to implement 'optField' on top of 'optFieldWith'
   -- It's also crucial for implementing unions on top of TOneOf
   -- it could be exposed to provide some form of error handling, but currently is not
-  TTry     :: Typeable a => Text -> TypedSchemaFlex a b -> (a' -> Maybe a) -> TypedSchemaFlex a' b
+  TTry     :: Text -> TypedSchemaFlex a b -> (a' -> Maybe a) -> TypedSchemaFlex a' b
   RecordSchema :: RecordFields from a -> TypedSchemaFlex from a
 
 type TypedSchema a = TypedSchemaFlex a a
 
-named :: Typeable from' => SchemaName -> TypedSchemaFlex from' a -> TypedSchemaFlex from' a
+named :: SchemaName -> TypedSchemaFlex from' a -> TypedSchemaFlex from' a
 named n sc = TNamed n sc id id
 
 -- | @enum values mapping@ construct a schema for a non empty set of values with a 'Text' mapping
@@ -90,15 +88,15 @@ enum showF opts = TEnum alts (fromMaybe (error "invalid alt") . flip lookup altM
   alts   = opts <&> \x -> (showF x, x)
 
 -- | @stringMap sc@ is the schema for a stringmap where the values have schema @sc@
-stringMap :: Typeable a => TypedSchema a -> TypedSchema (HashMap Text a)
+stringMap :: TypedSchema a -> TypedSchema (HashMap Text a)
 stringMap sc = TMap sc id id
 
 -- | @list sc@ is the schema for a list of values with schema @sc@
-list :: (IsList l, Typeable (Item l)) => TypedSchema (Item l) -> TypedSchema l
+list :: (IsList l) => TypedSchema (Item l) -> TypedSchema l
 list (schema) = TArray schema (fromList . V.toList) (V.fromList . toList)
 
 -- | @vector sc@ is the schema for a vector of values with schema @sc@
-vector :: Typeable a => TypedSchema a -> TypedSchema (Vector a)
+vector :: TypedSchema a -> TypedSchema (Vector a)
 vector sc = TArray sc id id
 
 -- | @viaJson label@ constructs a schema reusing existing 'aeson' instances. The resulting schema
@@ -211,15 +209,15 @@ fieldWith' (schema) n = RecordFields $ liftAlt (RequiredAp n schema)
 --   When encoding/decoding a value that doesn't fit the prism,
 --   an optional field will be omitted, and a required field will cause
 --   this alternative to be aborted.
-liftPrism :: Typeable a => Text -> Prism s t a b -> TypedSchemaFlex a b -> TypedSchemaFlex s t
+liftPrism :: Text -> Prism s t a b -> TypedSchemaFlex a b -> TypedSchemaFlex s t
 liftPrism n p sc = withPrism p $ \t f -> rmap t (TTry n sc (either (const Nothing) Just . f))
 
 -- | @liftJust = liftPrism _Just@
-liftJust :: Typeable a => TypedSchemaFlex a b -> TypedSchemaFlex (Maybe a) (Maybe b)
+liftJust :: TypedSchemaFlex a b -> TypedSchemaFlex (Maybe a) (Maybe b)
 liftJust = liftPrism "Just" _Just
 
 -- | @liftRight = liftPrism _Right@
-liftRight :: Typeable a => TypedSchemaFlex a b -> TypedSchemaFlex (Either c a) (Either c b)
+liftRight :: TypedSchemaFlex a b -> TypedSchemaFlex (Either c a) (Either c b)
 liftRight = liftPrism "Right" _Right
 
 -- | A generalized version of 'optField'. Does not handle infinite/circular data.
@@ -280,10 +278,10 @@ union args = TOneOf (mk <$> args)
 
 -- | Existential wrapper for convenient definition of discriminated unions
 data UnionTag v from where
-  UnionTag :: Typeable b => Text -> Prism' from b -> TypedSchema b -> UnionTag v from
+  UnionTag :: Text -> Prism' from b -> TypedSchema b -> UnionTag v from
 
 -- | @altWith name prism schema@ introduces a discriminated union alternative
-altWith :: Typeable a => TypedSchema a -> Text -> Prism' from a -> UnionTag v from
+altWith :: TypedSchema a -> Text -> Prism' from a -> UnionTag v from
 altWith sc n p = UnionTag n p sc
 
 -- | Given a non empty set of constructors, construct the schema that selects the first
@@ -348,7 +346,7 @@ extractValidators = go where
 type E = [(Trace, Mismatch)]
 
 -- | Given a value and its typed schema, produce a JSON record using the 'RecordField's
-encodeWith :: (Typeable from, Typeable a) => TypedSchemaFlex from a -> from -> Value
+encodeWith :: TypedSchemaFlex from a -> from -> Value
 encodeWith sc =
   fromRight (error "Internal error") $ encodeToWith sc (NE.head $ extractSchema sc)
 
@@ -357,14 +355,14 @@ type TypedSchemaVarEncode a = (Int, Except E (a -> Except E Value))
 mapTypedSchemaVarEncode :: (b -> a) -> TypedSchemaVarEncode a -> TypedSchemaVarEncode b
 mapTypedSchemaVarEncode f = second (fmap (lmap f))
 
-encodeToWith :: (Typeable from) => TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
+encodeToWith :: TypedSchemaFlex from a -> Schema -> Either E (from -> Value)
 encodeToWith sc target =
   (\m -> either (throw . AllAlternativesFailed) id . runExcept . m) <$> runExcept (go [] [] sc (target))
  where
   failWith ctx m = throwE [(reverse ctx, m)]
 
-  go :: forall from a . Typeable from
-    => [(SchemaName, Except E (Dynamic-> Except E Value))]
+  go :: forall from a .
+       [(SchemaName, Except E (Void -> Except E Value))]
     -> Trace
     -> TypedSchemaFlex from a
     -> Schema
@@ -374,13 +372,10 @@ encodeToWith sc target =
     case lookup n env of
       Just res -> do
         -- TODO understand why this delay is necessary
-        return $ unsafeDelay $ lmap (toDyn . fromf) <$> res
+        return $ unsafeDelay $ lmap (unsafeCoerce . fromf) <$> res
       Nothing ->
         let res = go ((n, resDyn):env) ctx sct sc
-            err d = unlines ["Wanted: " <> show (typeRep @from)
-                            ,"Found: " <> show (dynTypeRep d)
-                            ,"Context: " <> show (reverse ctx)]
-            resDyn = lmap (\d -> fromMaybe (error $ err d) $ fromDynamic d) <$> res
+            resDyn = lmap unsafeCoerce <$> res
         in lmap fromf <$> res
   go _ _tx TEmpty{} Array{}     = pure $ pure . const (A.Array [])
   go _ _tx TEmpty{} Record{}    = pure $ pure . const (A.Object [])
@@ -422,7 +417,7 @@ encodeToWith sc target =
         )
         alts
    where
-    extractField :: forall from a . Typeable from => RecordField from a -> NonDet [(Text, from -> Except E (Maybe Value))]
+    extractField :: forall from a . RecordField from a -> NonDet [(Text, from -> Except E (Maybe Value))]
     extractField RequiredAp {..} =
       case Map.lookup fieldName target of
         Nothing -> return []

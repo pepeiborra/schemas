@@ -19,7 +19,6 @@ import           Data.List.NonEmpty   (NonEmpty (..))
 import           Data.Maybe
 import           Data.Scientific
 import           Data.Text            (Text, pack, unpack)
-import           Data.Typeable
 import           Data.Vector          (Vector)
 import           Numeric.Natural
 import           Schemas.Internal
@@ -58,16 +57,16 @@ instance {-# OVERLAPPING #-} HasSchema String where
 instance HasSchema Text where
   schema = viaJSON "String"
 
-instance {-# OVERLAPPABLE #-} (Typeable a, HasSchema a) => HasSchema [a] where
+instance {-# OVERLAPPABLE #-} (HasSchema a) => HasSchema [a] where
   schema = list schema
 
-instance (Typeable a, HasSchema a) => HasSchema (Vector a) where
+instance (HasSchema a) => HasSchema (Vector a) where
   schema = vector schema
 
-instance (Eq a, Hashable a, Typeable a, HasSchema a) => HasSchema (HashSet a) where
+instance (Eq a, Hashable a, HasSchema a) => HasSchema (HashSet a) where
   schema = list schema
 
-instance  (Typeable a, HasSchema a) => HasSchema (NonEmpty a) where
+instance  (HasSchema a) => HasSchema (NonEmpty a) where
   schema = list schema
 
 instance HasSchema a => HasSchema (Identity a) where
@@ -121,11 +120,11 @@ instance (HasSchema a, HasSchema b, HasSchema c, HasSchema d, HasSchema e) => Ha
       <*> field "$4" (view _4)
       <*> field "$5" (view _5)
 
-instance (HasSchema a, HasSchema b, Typeable a, Typeable b) => HasSchema (Either a b) where
+instance (HasSchema a, HasSchema b) => HasSchema (Either a b) where
   schema = union' [alt "Left" _Left, alt "Right" _Right]
         <> union' [alt "left" _Left, alt "right" _Right]
 
-instance (Eq key, Hashable key, HasSchema a, Typeable a, Key key) => HasSchema (HashMap key a) where
+instance (Eq key, Hashable key, HasSchema a, Key key) => HasSchema (HashMap key a) where
   schema = dimap toKeyed fromKeyed $ stringMap schema
     where
       fromKeyed :: HashMap Text a -> HashMap key a
@@ -155,17 +154,17 @@ validatorsFor :: forall a . HasSchema a => Validators
 validatorsFor = extractValidators (schema @a)
 
 -- | encode using the default schema
-encode :: (HasSchema a, Typeable a) => a -> Value
+encode :: (HasSchema a) => a -> Value
 encode = encodeWith schema
 
 -- | Attempt to encode to the target schema using the default schema.
 --   First encodes using the default schema, then computes a coercion
 --   applying 'isSubtypeOf', and then applies the coercion to the encoded data.
-encodeTo :: (HasSchema a, Typeable a) => Schema -> Either [(Trace, Mismatch)] (a -> Value)
+encodeTo :: (HasSchema a) => Schema -> Either [(Trace, Mismatch)] (a -> Value)
 encodeTo = encodeToWith schema
 
 -- | Encode a value into a finite representation by enforcing a max depth
-finiteEncode :: forall a. (HasSchema a, Typeable a) => Natural -> a -> Value
+finiteEncode :: forall a. (HasSchema a) => Natural -> a -> Value
 finiteEncode d = finiteValue (validatorsFor @a) d (theSchema @a) . encode
 
 -- | Decode using the default schema.
@@ -188,13 +187,13 @@ field :: HasSchema a => Text -> (from -> a) -> RecordFields from a
 field = fieldWith schema
 
 -- | @optField name get@ introduces an optional field with the default schema for the type
-optField :: forall a from. (HasSchema a, Typeable a) => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
+optField :: forall a from. (HasSchema a) => Text -> (from -> Maybe a) -> RecordFields from (Maybe a)
 optField n get = optFieldWith (lmap get $ liftJust (schema @a)) n
 
 -- | @optFieldEither name get@ introduces an optional field with the default schema for the type
 optFieldEither
     :: forall a from e
-     . (Typeable a, HasSchema a)
+     . (HasSchema a)
     => Text
     -> (from -> Either e a)
     -> e
@@ -202,5 +201,5 @@ optFieldEither
 optFieldEither n x e = optFieldGeneral (lmap x $ liftRight (schema)) n (Left e)
 
 -- | @alt name prism@ introduces a discriminated union alternative with the default schema
-alt :: (Typeable a, HasSchema a) => Text -> Prism' from a -> UnionTag v from
+alt :: (HasSchema a) => Text -> Prism' from a -> UnionTag v from
 alt = altWith (schema)

@@ -16,7 +16,6 @@ import           Data.Foldable
 import           Data.Functor.Identity
 import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
-import           Data.Typeable
 import           Generators
 import           Person
 import           Person2
@@ -165,7 +164,7 @@ spec = do
         shouldNotLoop $ evaluate $ length $ show res
         res `shouldBe` Right pepe4
 
-schemaSpec :: (Eq a, Show a, Typeable a) => TypedSchema a -> a -> Spec
+schemaSpec :: (Eq a, Show a) => TypedSchema a -> a -> Spec
 schemaSpec sc ex = do
   let encoder = encodeToWith sc (NE.head $ extractSchema sc)
       decoder = decodeFromWith sc (NE.head $ extractSchema sc)
@@ -199,7 +198,7 @@ shouldNotLoop act = do
   res <- timeout 1000000 act
   res `shouldSatisfy` isJust
 
-shouldBeAbleToEncode :: forall a . (HasSchema a, Typeable a) => NE.NonEmpty Schema -> Expectation
+shouldBeAbleToEncode :: forall a . (HasSchema a) => NE.NonEmpty Schema -> Expectation
 shouldBeAbleToEncode sc = asumEither (fmap (encodeTo @a) sc) `shouldSatisfy` isRight
 
 shouldBeAbleToDecode :: forall a . (HasSchema a) => NE.NonEmpty Schema -> Expectation
