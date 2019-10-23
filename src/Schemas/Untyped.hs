@@ -106,7 +106,7 @@ _Union = prism' build match
     build = OneOf . fmap (\(n,sc) -> Record [(n, Field sc True)])
 
     match (OneOf scc) = traverse viewAlt scc
-    match _           = Nothing
+    match x = (:| []) <$> viewAlt x
 
     viewAlt :: Schema -> Maybe (Text, Schema)
     viewAlt (Record [(n,Field sc True)]) = Just (n, sc)
