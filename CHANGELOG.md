@@ -1,5 +1,12 @@
 # Revision history for schemas
 
+## 0.3.0 --  2019-10-23
+* Fixed a bug in isSubtypeOf for unions
+* Fixed exponential performance (#3)
+* Changed the representation of untyped schemas to remove Alternatives
+  Alternatives are only possible on typed schemas
+* Added support for recursive schemas (#1)
+
 ## 0.2.0.3 --  2019-10-13
 * Bug fixes and performance improvements
 
