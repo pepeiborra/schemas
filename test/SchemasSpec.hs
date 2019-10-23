@@ -61,6 +61,9 @@ spec = do
     it "subtypes can relax the type of a field" $ do
       Record [makeField "a" prim True]
         `shouldBeSubtypeOf` Record [makeField "a" (Array prim) True]
+    it "subtypes can relax the type of a constructor field" $ do
+      Union [constructor' "a" prim]
+        `shouldBeSubtypeOf` Union [constructor' "a" (Array prim)]
     it "subtypes cannot remove Required fields" $ do
       Record [makeField "def" prim True] `shouldNotBeSubtypeOf` Record
         [makeField "def" prim True, makeField "a" prim True]

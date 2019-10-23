@@ -285,7 +285,7 @@ extractFieldsHelper f = runAlt_ (\x -> (: []) <$> f x) . getRecordFields
 -- | Given a non empty set of tagged partial schemas, constructs the schema that applies
 --   them in order and selects the first successful match.
 union :: (NonEmpty (Text, TypedSchema a)) -> TypedSchema a
-union args = TOneOf (mk <$> args)
+union args = oneOf (mk <$> args)
   where mk (name, sc) = RecordSchema $ fieldWith' sc name
 
 -- | Existential wrapper for convenient definition of discriminated unions

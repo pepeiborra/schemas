@@ -40,9 +40,6 @@ import           Prelude                    hiding (lookup)
 import           Text.Read
 import           Text.Show.Functions        ()
 
--- import           Debug.Pretty.Simple
-
-
 -- Schemas
 -- --------------------------------------------------------------------------------
 
@@ -103,7 +100,7 @@ _Empty = prism' build match
 _Union :: Prism' Schema (NonEmpty (Text, Schema))
 _Union = prism' build match
   where
-    build = OneOf . fmap (\(n,sc) -> Record [(n, Field sc True)])
+    build = foldMap (\(n,sc) -> Record [(n, Field sc True)])
 
     match (OneOf scc) = traverse viewAlt scc
     match x = (:| []) <$> viewAlt x
@@ -204,7 +201,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] [] sup sub
     -> Schema
     -> Schema
     -> Except [(Trace, Mismatch)] (Value -> Value)
---  go _ sup sub | pTraceShow ("isSubtypeOf", sub, sup) False = undefined
+  -- go _ _ sup sub | pTraceShow ("isSubtypeOf", sub, sup) False = undefined
   go env ctx (Named a sa) (Named b sb) | a == b =
     case lookup a env of
       Just sol -> sol
@@ -232,7 +229,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] [] sup sub
   go env ctx (Union opts) (Union opts') = do
     ff <- forM opts' $ \(n, sc) -> do
       sc' :: Schema <- maybe (failWith ctx $ InvalidConstructor n) return $ lookup n (toList opts)
-      f   <- go env (n : ctx) sc sc'
+      f   <- go env (n : ctx) sc' sc
       return $ over (_Object . ix n) f
     return (foldr (.) id ff)
   go env ctx (Record opts) (Record opts') = do
