@@ -1,5 +1,5 @@
-[![CI](https://travis-ci.com/pepeiborra/schemas.svg)](https://travis-ci.org/pepeiborra/threepenny-editors)
-[![Hackage](https://img.shields.io/hackage/v/schemas.svg)](https://hackage.haskell.org/package/threepenny-editors)
+[![CI](https://travis-ci.com/pepeiborra/schemas.svg)](https://travis-ci.com/pepeiborra/schemas)
+[![Hackage](https://img.shields.io/hackage/v/schemas.svg)](https://hackage.haskell.org/package/schemas)
 # schemas
 
 schemas is a Haskell-centric serialization library written with versioning in mind. Since a schema is a first-class citizen, it can be serialized, reasoned about, and transmitted together with the data. Serialization and deserialization work better when the source schema is provided, and versioning is accomplished by checking that the two schemas are related by a subtyping relation. This alleviates the need to keep old versions of datatypes around.
