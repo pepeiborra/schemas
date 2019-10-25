@@ -81,7 +81,7 @@ data OpenApi2Schema = OpenApi2Schema
   deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 instance HasSchema OpenApi2Schema where
-  schema = gSchema defOptions { fieldLabelModifier = dropWhile (== '_') }
+  schema = named "OpenApi2" $ gSchema defOptions { fieldLabelModifier = dropWhile (== '_') }
 
 defOpenApi2Schema :: OpenApi2Type -> OpenApi2Schema
 defOpenApi2Schema t =
