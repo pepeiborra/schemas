@@ -1,5 +1,8 @@
 # Revision history for schemas
 
+## 0.3.0.1 --  2019-10-25
+* Fix a bug that made OpenApi2 generation diverge.
+
 ## 0.3.0 --  2019-10-23
 * Fixed a bug in isSubtypeOf for unions
 * Fixed exponential performance (#3)
