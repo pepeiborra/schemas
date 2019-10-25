@@ -9,6 +9,7 @@ import           Control.Applicative
 import           Data.Generics.Labels  ()
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import           Data.Maybe
 import           Data.String
 import           GHC.Exts (IsList(..))
 import           Person
@@ -18,7 +19,7 @@ import           Schemas
 --   and renames 'studies' to 'education'
 data Person2 = Person2
   { name      :: String
-  , age       :: Int
+  , age       :: Maybe Int
   , addresses :: [String]
   , religion  :: (Maybe Religion)  -- new
   , education :: NonEmpty Education         -- renamed
@@ -39,14 +40,14 @@ instance HasSchema Person2 where
     record
       $   Person2
       <$> field "name"      Person2.name
-      <*> field "age"       Person2.age
+      <*> (optField "age"       Person2.age <|> fieldWith (dimap (fromMaybe (-1)) Just schema) "age" Person2.age)
       <*> field "addresses" Person2.addresses
       <*> optField "religion"  Person2.religion
       <*> (field "education" Person2.education <|> (NE.:| []) <$> field "studies" (NE.head . Person2.education))
 
 pepe2 :: Person2
 pepe2 = Person2 "Pepe"
-                38
+                (Just 38)
                 ["2 Edward Square", "La Mar 10"]
                 Nothing
                 [PhD "Computer Science", Degree "Engineering" ]

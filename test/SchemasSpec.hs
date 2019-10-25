@@ -92,14 +92,15 @@ spec = do
   describe "examples" $ do
     let   person4_v0 = theSchema @Person4
           person2_v0 = theSchema @Person2
+          person2_v2 = extractSchema (schema @Person2) NE.!! 2
           person3_v0 = theSchema @Person3
-          person4_vPerson2 = person2_v0
           person4_vPerson3 = person3_v0
           encoder_p4v0 = encodeTo person4_v0
           encoder_p3_to_p4 = encodeTo person4_vPerson3
-          encoder_p2_to_p4 = encodeTo person4_vPerson2
           encoder_p2v0 = encodeTo person2_v0
           encoder_p3v0 = encodeTo @Person3 person3_v0
+          decoder_p2v0 = decodeFrom @Person4 person2_v0
+          decoder_p2v2 = decodeFrom person2_v2
     describe "Person" $ do
       schemaSpec schema pepe
     describe "Person2" $ do
@@ -125,15 +126,14 @@ spec = do
       schemaSpec schema pepe4
       let encoded_pepe4 = fromRight undefined encoder_p4v0 pepe4
           encoded_pepe3 = fromRight undefined encoder_p3_to_p4 pepe3{Person3.spouse = Nothing}
-          encoded_pepe2 = fromRight undefined encoder_p2_to_p4 pepe2
-          encoded_pepe2' = fromRight undefined encoder_p2v0 pepe2
+          encoded_pepe2 = fromRight undefined encoder_p2v0 pepe2
       it "can compute an encoder for Person4" $ do
         shouldNotLoop $ evaluate encoder_p4v0
         encoder_p4v0 `shouldSatisfy` isRight
-      it "can compute an encoder for Person3 in finite time" $ do
+      it "can compute an encoder to Person3 in finite time" $ do
         shouldNotLoop $ evaluate encoder_p3_to_p4
-      it "can compute an encoder for Person2 in finite time" $ do
-        shouldNotLoop $ evaluate encoder_p2_to_p4
+      it "can compute an encoder to Person2 in finite time" $ do
+        shouldNotLoop $ evaluate encoder_p2v0
       it "can encode a Person4" $ do
         shouldNotLoop $ evaluate $ A.encode encoded_pepe4
       it "can encode a Person2 as Person4 in finite time" $ do
@@ -146,12 +146,12 @@ spec = do
         let res = decode encoded_pepe4
         shouldNotLoop $ evaluate res
         res `shouldBe` Right pepe4
-      it "can decode a Person2 encoded to Person4 with source schema" $ do
-        let res = fromRight undefined (decodeFrom person4_vPerson2) encoded_pepe2
-        shouldNotLoop $ evaluate res
-        res `shouldBe` Right pepe4
-      it "can decode a Person2" $ do
-        let res = fromRight undefined (decodeFrom person2_v0) encoded_pepe2'
+      it "cannot construct a Person2 v0 decoder" $
+        decoder_p2v0 `shouldSatisfy` isLeft
+      it "can construct a Person2 v1 decoder" $
+        decoder_p2v2 `shouldSatisfy` isRight
+      it "can decode a Person2 v1" $ do
+        let res = fromRight undefined decoder_p2v2 encoded_pepe2
             holds = res == Right pepe4
         shouldNotLoop $ evaluate holds
         shouldNotLoop $ evaluate $ length $ show res
