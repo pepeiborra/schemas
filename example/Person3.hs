@@ -51,6 +51,10 @@ laura3 = pepe3  { name      = "Laura"
                 , religion  = Just Catholic
                 }
 
+martin :: Person3
+martin = Person3 "Martin" 10 [] Nothing Nothing []
+
+
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
 -- >>> B.putStrLn $ encodePretty $ finiteEncode 4 laura3
