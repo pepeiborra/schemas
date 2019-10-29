@@ -19,10 +19,10 @@ data Education = NoEducation | Degree {unDegree :: String} | PhD {unPhD :: Strin
   deriving (Generic, Eq, Show)
 
 instance HasSchema Education where
-  schema = union'
-    [alt "NoEducation" #_NoEducation
-    ,alt "PhD" #_PhD
-    ,alt "Degree" #_Degree
+  schema = union
+    [("NoEducation", alt #_NoEducation)
+    ,("PhD", alt #_PhD)
+    ,("Degree", alt #_Degree)
     ]
 
 data Person = Person
@@ -71,7 +71,7 @@ pepe = Person
 --         },
 --         "age": {
 --             "schema": {
---                 "Prim": "Int"
+--                 "Prim": "Integer"
 --             }
 --         },
 --         "studies": {
@@ -79,9 +79,9 @@ pepe = Person
 --                 "Union": [
 --                     {
 --                         "schema": {
---                             "Empty": {}
+--                             "Prim": "String"
 --                         },
---                         "constructor": "NoEducation"
+--                         "constructor": "Degree"
 --                     },
 --                     {
 --                         "schema": {
@@ -91,9 +91,9 @@ pepe = Person
 --                     },
 --                     {
 --                         "schema": {
---                             "Prim": "String"
+--                             "Record": {}
 --                         },
---                         "constructor": "Degree"
+--                         "constructor": "NoEducation"
 --                     }
 --                 ]
 --             }

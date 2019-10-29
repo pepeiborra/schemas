@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE OverloadedLabels      #-}
@@ -7,6 +10,8 @@ module Person3 where
 
 import           Control.Applicative
 import           Data.Generics.Labels  ()
+import           GHC.Generics
+import qualified Generics.SOP as SOP
 import           Person
 import           Person2
 import           Schemas
@@ -20,7 +25,8 @@ data Person3 = Person3
   , religion  :: Maybe Religion
   , education :: [Education]
   }
-  deriving (Eq, Show)
+  deriving (Generic, Eq, Show)
+  deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 instance HasSchema Person3 where
   schema  = named "Person3"

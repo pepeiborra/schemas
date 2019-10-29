@@ -2,6 +2,10 @@
 ## 0.3.0.2 --  2019-10-29
 * Show circular schemas
 
+## 0.4.0
+* 'oneOf' and 'liftPrism' now have a better type signature
+* 'UnionTag' renamed to 'UnionAlt'
+
 ## 0.3.0.1 --  2019-10-25
 * Fix a bug that made OpenApi2 generation diverge.
 
