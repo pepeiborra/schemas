@@ -28,7 +28,7 @@ import           Data.Either
 import           Data.Foldable              (asum)
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as Map
-import           Data.List                  (find)
+import           Data.List                  (find, intersperse, intercalate)
 import           Data.List.NonEmpty         (NonEmpty (..))
 import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
@@ -44,7 +44,9 @@ import           Text.Show.Functions        ()
 -- --------------------------------------------------------------------------------
 
 newtype SchemaName = SchemaName String
-  deriving newtype (Eq, IsString, Show)
+  deriving newtype (Eq, IsString)
+
+instance Show SchemaName where show (SchemaName s) = s
 
 -- | A schema for untyped data, such as JSON or XML.
 --
@@ -59,7 +61,7 @@ data Schema
   | OneOf (NonEmpty Schema)   -- ^ Decoding works for all alternatives, encoding only for one
   | Prim Text                     -- ^ Carries the name of primitive type
   | Named SchemaName Schema
-  deriving (Eq, Generic, Show)
+  deriving (Eq, Generic)
 
 instance Monoid Schema where mempty = Empty
 instance Semigroup Schema where
@@ -68,6 +70,41 @@ instance Semigroup Schema where
   OneOf aa <> b = OneOf (aa <> [b])
   b <> OneOf aa = OneOf ([b] <> aa)
   a <> b        = OneOf [a,b]
+instance Show Schema where
+  showsPrec = go []   where
+    go seen p (Array     sc) = (('[' :) . go seen 5 sc . (']' :))
+    go seen p (StringMap sc) = showParen (p > 5) (("Map " ++) . go seen 5 sc)
+    go _een p (Enum opts) =
+      showParen (p > 5) (intercalate "|" (NE.toList $ fmap unpack opts) ++)
+    go seen p (OneOf scc) = showParen (p > 5) $ foldr (.) id $ NE.intersperse
+      (" | " ++)
+      (fmap (go seen 6) scc)
+    go seen p (Record fields) =
+      ('{' :)
+        . foldr
+            (.)
+            id
+            (intersperse
+              (", " ++)
+              (fmap
+                (\(r, Field {..}) ->
+                  (unpack r ++) . ((if isRequired then " :: " else " ?? ")  ++) . go seen 0 fieldSchema
+                )
+                (Map.toList fields)
+              )
+            )
+        . ('}' :)
+    go _een _ (Prim t    ) = (unpack t ++)
+    go seen p (Named n sc) = case n `elem` seen of
+      False ->
+        ("let " ++)
+          . (show n ++)
+          . (" = " ++)
+          . self
+          . (" in " ++)
+          . (show n ++)
+      True -> (show n ++)
+      where self = go (n : seen) p sc
 
 data Field = Field
   { fieldSchema :: Schema

@@ -120,8 +120,13 @@ spec = do
         -- shouldBeAbleToEncode @Person  (extractSchema @Person2 schema)
         shouldBeAbleToDecode @Person2 (extractSchema @Person schema)
     describe "Person3" $ do
+      it "can show the Person 3 (circular) schema" $
+        shouldNotLoop $ evaluate $ length $ show $ theSchema @Person3
       it "can compute an encoder for Person3 (circular schema)" $
         shouldNotLoop $ evaluate encoder_p3v0
+      it "can encode a finite example" $ do
+        shouldNotLoop $ evaluate $ encode martin
+        shouldNotLoop $ evaluate $ fromRight undefined encoder_p3v0 martin
     describe "Person4" $ do
       schemaSpec schema pepe4
       let encoded_pepe4 = fromRight undefined encoder_p4v0 pepe4
@@ -171,22 +176,22 @@ schemaSpec sc ex = do
   it "Roundtrips ex (2)" $
     decodeWith sc (encodeWith sc ex) `shouldBe` Right ex
 
-shouldBeSubtypeOf :: Schema -> Schema -> Expectation
+shouldBeSubtypeOf :: HasCallStack => Schema -> Schema -> Expectation
 shouldBeSubtypeOf a b = case isSubtypeOf primValidators a b of
   Right _ -> pure ()
   _       -> expectationFailure $ show a <> " should be a subtype of " <> show b
 
-shouldNotBeSubtypeOf :: Schema -> Schema -> Expectation
+shouldNotBeSubtypeOf :: HasCallStack => Schema -> Schema -> Expectation
 shouldNotBeSubtypeOf a b = case isSubtypeOf primValidators a b of
   Right _  -> expectationFailure $ show a <> " should not be a subtype of " <> show b
   _ -> pure ()
 
-shouldLoop :: (Show a) => IO a -> Expectation
+shouldLoop :: (Show a, HasCallStack) => IO a -> Expectation
 shouldLoop act = do
   res <- timeout 1000000 act
   res `shouldSatisfy` isNothing
 
-shouldNotLoop :: (Show a) => IO a -> Expectation
+shouldNotLoop :: (Show a, HasCallStack) => IO a -> Expectation
 shouldNotLoop act = do
   res <- timeout 1000000 act
   res `shouldSatisfy` isJust
