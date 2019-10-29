@@ -1,4 +1,6 @@
 # Revision history for schemas
+## 0.3.0.2 --  2019-10-29
+* Show circular schemas
 
 ## 0.3.0.1 --  2019-10-25
 * Fix a bug that made OpenApi2 generation diverge.
