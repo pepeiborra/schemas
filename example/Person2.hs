@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE OverloadedLabels      #-}
@@ -12,6 +15,8 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Maybe
 import           Data.String
 import           GHC.Exts (IsList(..))
+import           GHC.Generics
+import qualified Generics.SOP as SOP
 import           Person
 import           Schemas
 
@@ -24,7 +29,8 @@ data Person2 = Person2
   , religion  :: (Maybe Religion)  -- new
   , education :: NonEmpty Education         -- renamed
   }
-  deriving (Eq, Show)
+  deriving (Generic, Eq, Show)
+  deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 data Religion = Catholic | Anglican | Muslim | Hindu
   deriving (Bounded, Enum, Eq, Show)
@@ -39,11 +45,16 @@ instance HasSchema Person2 where
   schema =
     record
       $   Person2
-      <$> field "name"      Person2.name
-      <*> (optField "age"       Person2.age <|> fieldWith (dimap (fromMaybe (-1)) Just schema) "age" Person2.age)
+      <$> field "name" Person2.name
+      <*> (   optField "age" Person2.age
+          <|> fieldWith (dimap (fromMaybe (-1)) Just schema) "age" Person2.age
+          )
       <*> field "addresses" Person2.addresses
-      <*> optField "religion"  Person2.religion
-      <*> (field "education" Person2.education <|> (NE.:| []) <$> field "studies" (NE.head . Person2.education))
+      <*> optField "religion" Person2.religion
+      <*> (field "education" Person2.education <|> (NE.:| []) <$> field
+            "studies"
+            (NE.head . Person2.education)
+          )
 
 pepe2 :: Person2
 pepe2 = Person2 "Pepe"

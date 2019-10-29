@@ -9,6 +9,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Schemas.SOP
   ( gSchema
+  , HasGenericSchema
   , gRecordFields
   , Options(..)
   , defOptions
@@ -23,6 +24,8 @@ import           Data.Text                (Text, pack)
 import           Generics.SOP             as SOP
 import           Schemas.Class
 import           Schemas.Internal
+
+type HasGenericSchema a = (HasDatatypeInfo a, All2 FieldEncode (Code a))
 
 data Options = Options
   { fieldLabelModifier     :: String -> String
