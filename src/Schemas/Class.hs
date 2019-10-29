@@ -33,7 +33,7 @@ class HasSchema a where
   schema :: TypedSchema a
 
 instance HasSchema () where
-  schema = mempty
+  schema = TPure ()
 
 instance HasSchema Bool where
   schema = viaJSON "Boolean"
@@ -77,16 +77,16 @@ instance HasSchema a => HasSchema (Identity a) where
 deriving instance HasSchema SchemaName
 
 instance HasSchema Schema where
-  schema = named "Schema" $ union'
-    [ alt "StringMap" $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing)
-    , alt "Array"     $ prism' Array (\case Array x -> Just x ; _ -> Nothing)
-    , alt "Enum"      $ prism' Enum (\case Enum x -> Just x ; _ -> Nothing)
-    , alt "Record"    $ prism' Record (\case Record x -> Just x ; _ -> Nothing)
-    , alt "Empty"      _Empty
-    , alt "Prim"      $ prism' Prim (\case Prim x -> Just x ; _ -> Nothing)
-    , altWith unionSchema "Union" _Union
-    , alt "OneOf"     $ prism' OneOf (\case OneOf x -> Just x ; _ -> Nothing)
-    , altWith namedSchema "Named" $ prism' (uncurry Named) (\case Named s sc -> Just (s,sc) ; _ -> Nothing)
+  schema = named "Schema" $ union
+    [ ("StringMap", alt $ prism' StringMap (\case StringMap x -> Just x ; _ -> Nothing))
+    , ("Array", alt     $ prism' Array (\case Array x -> Just x ; _ -> Nothing))
+    , ("Enum", alt      $ prism' Enum (\case Enum x -> Just x ; _ -> Nothing))
+    , ("Record", alt    $ prism' Record (\case Record x -> Just x ; _ -> Nothing))
+    , ("Prim", alt      $ prism' Prim (\case Prim x -> Just x ; _ -> Nothing))
+    , ("Union",altWith unionSchema _Union)
+    , ("OneOf", alt     $ prism' OneOf (\case OneOf x -> Just x ; _ -> Nothing))
+    , ("Named", altWith namedSchema $ prism' (uncurry Named) (\case Named s sc -> Just (s,sc) ; _ -> Nothing))
+    , ("Empty", alt     $ prism' (const Empty) (\case Empty -> Just () ; _ -> Nothing))
     ]
     where
       namedSchema = record $ (,) <$> field "name" fst <*> field "schema" snd
@@ -127,8 +127,8 @@ instance (HasSchema a, HasSchema b, HasSchema c, HasSchema d, HasSchema e) => Ha
       <*> field "$5" (view _5)
 
 instance (HasSchema a, HasSchema b) => HasSchema (Either a b) where
-  schema = union' [alt "Left" _Left, alt "Right" _Right]
-        <> union' [alt "left" _Left, alt "right" _Right]
+  schema = union [("Left", alt _Left), ("Right", alt _Right)
+                 ,("left", alt _Left), ("right", alt _Right)]
 
 instance (Eq key, Hashable key, HasSchema a, Key key) => HasSchema (HashMap key a) where
   schema = dimap toKeyed fromKeyed $ stringMap schema
@@ -200,8 +200,8 @@ optFieldEither
     -> (from -> Either e a)
     -> e
     -> RecordFields from (Either e a)
-optFieldEither n x e = optFieldGeneral (lmap x $ liftRight schema) n (Left e)
+optFieldEither n f e = optFieldEitherWith (lmap f (liftPrism _Right schema mempty)) n e
 
 -- | @alt name prism@ introduces a discriminated union alternative with the default schema
-alt :: HasSchema a => Text -> Prism' from a -> UnionTag from
+alt :: HasSchema a => Prism' from a -> UnionAlt from
 alt = altWith schema

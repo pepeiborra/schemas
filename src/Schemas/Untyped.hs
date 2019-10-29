@@ -28,10 +28,12 @@ import           Data.Either
 import           Data.Foldable              (asum)
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as Map
+import           Data.HashSet               (HashSet)
 import           Data.List                  (find, intersperse, intercalate)
 import           Data.List.NonEmpty         (NonEmpty (..))
 import qualified Data.List.NonEmpty         as NE
 import           Data.Maybe
+import           Data.Semigroup
 import           Data.Text                  (Text, pack, unpack)
 import           Data.Typeable
 import           GHC.Exts                   (IsList (..), IsString(..))
@@ -61,6 +63,7 @@ data Schema
   | OneOf (NonEmpty Schema)   -- ^ Decoding works for all alternatives, encoding only for one
   | Prim Text                     -- ^ Carries the name of primitive type
   | Named SchemaName Schema
+  | Empty
   deriving (Eq, Generic)
 
 instance Monoid Schema where mempty = Empty
@@ -70,16 +73,18 @@ instance Semigroup Schema where
   OneOf aa <> b = OneOf (aa <> [b])
   b <> OneOf aa = OneOf ([b] <> aa)
   a <> b        = OneOf [a,b]
+
 instance Show Schema where
   showsPrec = go []   where
-    go seen p (Array     sc) = (('[' :) . go seen 5 sc . (']' :))
+    go _een p  Empty          = showParen (p>0) $ ("Empty " ++)
+    go seen _ (Array     sc) = (('[' :) . go seen 5 sc . (']' :))
     go seen p (StringMap sc) = showParen (p > 5) (("Map " ++) . go seen 5 sc)
     go _een p (Enum opts) =
       showParen (p > 5) (intercalate "|" (NE.toList $ fmap unpack opts) ++)
     go seen p (OneOf scc) = showParen (p > 5) $ foldr (.) id $ NE.intersperse
       (" | " ++)
       (fmap (go seen 6) scc)
-    go seen p (Record fields) =
+    go seen _ (Record fields) =
       ('{' :)
         . foldr
             (.)
@@ -119,15 +124,15 @@ instance Show Field where
 fieldSchemaL :: Applicative f => (Schema -> f Schema) -> Field -> f Field
 fieldSchemaL f Field{..} = Field <$> f fieldSchema <*> pure isRequired
 
-pattern Empty :: Schema
-pattern Empty <- Record [] where Empty = Record []
+pattern Unit :: Schema
+pattern Unit <- Record [] where Unit = Record []
 
 pattern Union :: NonEmpty (Text, Schema) -> Schema
 pattern Union alts <- (preview _Union -> Just alts) where
   Union alts = review _Union alts
 
-_Empty :: Prism' Schema ()
-_Empty = prism' build match
+_Unit :: Prism' Schema ()
+_Unit = prism' build match
   where
     build () = Record []
 
@@ -157,17 +162,17 @@ data Mismatch
   | OptionalRecordField { name :: Text }
   | InvalidRecordField { name :: Text, mismatches :: [(Trace, Mismatch)] }
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
+  | InvalidRecordValue { value :: Value }
   | InvalidConstructor { name :: Text}
   | InvalidUnionValue  { contents :: Value}
   | SchemaMismatch     {a, b :: Schema}
   | ValueMismatch      {expected :: Schema, got :: Value}
-  | EmptyAllOf
+  | EmptySchema
   | PrimValidatorMissing { name :: Text }
   | PrimError {name, primError :: Text}
   | PrimMismatch {have, want :: Text}
   | InvalidChoice{choiceNumber :: Int}
-  | TryFailed { name :: Text }
-  | UnusedFields [[Text]]
+  | UnusedFields (HashSet Text)
   | AllAlternativesFailed { mismatches :: [(Trace,Mismatch)]}
   | UnexpectedAllOf
   | NoMatches
@@ -245,11 +250,12 @@ isSubtypeOf validators sub sup = runExcept $ go [] [] sup sub
       Nothing ->
         let sol = go ((a,sol) : env) ctx sa sb
         in sol
-  go _nv _tx Empty         _         = pure $ const emptyValue
-  go _nv _tx (Array     _) Empty     = pure $ const (A.Array [])
-  go _nv _tx (Record    _) Empty     = pure $ const emptyValue
-  go _nv _tx (StringMap _) Empty     = pure $ const emptyValue
-  go _nv _tx OneOf{}       Empty     = pure $ const emptyValue
+  go _   _   Empty        Empty     = pure id
+  go _nv _tx Unit         _         = pure $ const emptyValue
+  go _nv _tx (Array     _) Unit     = pure $ const (A.Array [])
+  go _nv _tx (Record    _) Unit     = pure $ const emptyValue
+  go _nv _tx (StringMap _) Unit     = pure $ const emptyValue
+  go _nv _tx OneOf{}       Unit     = pure $ const emptyValue
   go _nv ctx (Prim      a) (Prim b ) = do
     unless (a == b) $ failWith ctx (PrimMismatch b a)
     pure id

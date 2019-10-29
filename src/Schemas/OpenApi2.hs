@@ -136,6 +136,7 @@ toOpenApi2
   :: (Text -> Maybe OpenApi2Schema)
   -> Schema
   -> WriterT OpenApi2Document (Except Reason) OpenApi2Schema
+toOpenApi2 prim Empty = lift $ throwE $ Unsupported "empty"
 toOpenApi2 prim (Array sc) = toOpenApi2 prim sc
   <&> \sc2 -> (defOpenApi2Schema OpenApi2Array) { items = Just sc2 }
 toOpenApi2 prim (StringMap sc) = toOpenApi2 prim sc <&> \sc2 ->
@@ -159,8 +160,8 @@ toOpenApi2 prim (Union alts) = do
     }
 toOpenApi2 prim (Prim p) | Just y <- prim p = pure y
 toOpenApi2 _rim (Prim p) = lift $ throwE $ Unsupported $ "Unknown prim: " <> p
-toOpenApi2 _rim OneOf{} =
-  lift $ throwE $ Unsupported "undiscriminated unions (OneOf)"
+toOpenApi2 _rim s@OneOf{} =
+  lift $ throwE $ Unsupported $ "undiscriminated unions (OneOf): " <> Text.pack (show s)
 
 -- TODO future work
 -- fromOpenApi2 :: OpenApi2 -> Schema

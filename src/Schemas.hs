@@ -42,6 +42,8 @@ module Schemas
   , TypedSchema
   , HasSchema(..)
   -- ** Construction
+  , emptySchema
+  , pureSchema
   , enum
   , readShow
   , list
@@ -70,15 +72,16 @@ module Schemas
   -- *** Partial schemas
   , liftJust
   , liftRight
-  , liftPrism
-  -- *** Unions
+  -- *** Discriminated Unions
   , union
-  , union'
   , alt
   , altWith
-  , UnionTag
-  , oneOf
-  -- * Encoding
+  , UnionAlt
+  -- *** Undiscriminated unions
+  , Typed.oneOf
+  , eitherSchema
+  , liftPrism
+  -- ** Encoding
   , encode
   , decode
   , encodeTo
@@ -89,13 +92,13 @@ module Schemas
   , decodeFromWith
   , DecodeError
 
-  -- * working with recursive schemas
+  -- ** working with recursive schemas
   , named
 
   -- * Untyped schemas
-  , Schema(.., Empty, Union)
+  , Schema(.., Unit, Union)
   , Field(..)
-  , _Empty
+  , _Unit
   , _Union
   -- ** Extraction
   , extractSchema
@@ -114,6 +117,6 @@ module Schemas
 
 import Data.Profunctor
 import Schemas.Class
-import Schemas.Internal
+import Schemas.Internal as Typed
 import Schemas.Untyped
 

@@ -17,8 +17,8 @@ module Schemas.SOP
   )
 where
 
+import           Control.Lens (prism')
 import qualified Data.List.NonEmpty       as NE
-import           Data.Maybe
 import           Data.Profunctor
 import           Data.Text                (Text, pack)
 import           Generics.SOP             as SOP
@@ -38,7 +38,7 @@ defOptions = Options id id
 fieldSchemaC :: Proxy FieldEncode
 fieldSchemaC = Proxy
 
-gSchema :: forall a. (HasDatatypeInfo a, All2 FieldEncode (Code a)) => Options -> TypedSchema a
+gSchema :: forall a. HasGenericSchema a => Options -> TypedSchema a
 gSchema opts = case datatypeInfo (Proxy @a) of
     (Newtype _ _ ci       ) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
     (ADT _ _ (ci :* Nil) _) -> dimap (unZ . unSOP . from) (to . SOP . Z) $ gSchemaNP opts ci
@@ -51,24 +51,23 @@ gRecordFields opts = case datatypeInfo (Proxy @a) of
 
 
 gSchemaNS :: forall xss . All2 FieldEncode xss => Options -> NP ConstructorInfo xss -> TypedSchema (NS (NP I) xss)
-gSchemaNS opts =
-    union
-        . NE.fromList
-        . hcollapse
-        . hczipWith3 (Proxy :: Proxy (All FieldEncode)) mk (injections @_ @(NP I)) (ejections  @_ @(NP I))
+gSchemaNS opts ci =
+    case mkAlts ci of
+      [] -> mempty
+      other -> union $ NE.fromList other
     where
+        mkAlts = hcollapse . hczipWith3 (Proxy :: Proxy (All FieldEncode)) mk (injections @_ @(NP I)) (ejections  @_ @(NP I))
         mk
             :: forall (xs :: [*])
              . All FieldEncode xs
             => Injection (NP I) xss xs
             -> Ejection (NP I) xss xs
             -> ConstructorInfo xs
-            -> K (Text, TypedSchema (NS (NP I) xss)) xs
-        mk (Fn inject) (Fn eject) ci = K
-            ( cons
-            , dimap (unComp . eject . K) (unK . inject . fromJust) (liftJust $ gSchemaNP opts ci)
-            )
-            where cons = pack (constructorTagModifier opts (constructorName ci))
+            -> K (Text, UnionAlt (NS (NP I) xss)) xs
+        mk (Fn inject) (Fn eject) ci = K (cons, altWith sc (prism' (unK . inject) (unComp . eject . K))) where
+            -- sc = dimap (unComp . eject . K) (unK . inject . fromJust) gSchemaNP opts ci)
+            sc = gSchemaNP opts ci
+            cons = pack (constructorTagModifier opts (constructorName ci))
 
 gSchemaNP
     :: forall (xs :: [*])

@@ -66,63 +66,48 @@ pepe2 = Person2 "Pepe"
 -- Person2 can be encoded in multiple ways, so the canonic encoding includes all ways
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
--- >>> B.putStrLn $ encodePretty $ encodeTo (theSchema @Person2) pepe2
+-- >>> import Data.Either
+-- >>> B.putStrLn $ encodePretty $ fromRight undefined (encodeTo (theSchema @Person2)) pepe2
 -- {
---     "#1": {
---         "education": {
+--     "education": [
+--         {
 --             "PhD": "Computer Science"
 --         },
---         "addresses": [
---             "2 Edward Square",
---             "La Mar 10"
---         ],
---         "age": 38,
---         "name": "Pepe"
---     },
---     "#2": {
---         "addresses": [
---             "2 Edward Square",
---             "La Mar 10"
---         ],
---         "age": 38,
---         "studies": {
---             "PhD": "Computer Science"
---         },
---         "name": "Pepe"
---     }
+--         {
+--             "Degree": "Engineering"
+--         }
+--     ],
+--     "addresses": [
+--         "2 Edward Square",
+--         "La Mar 10"
+--     ],
+--     "age": 38,
+--     "name": "Pepe"
 -- }
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
 -- >>> B.putStrLn $ encodePretty $ encode pepe2
 -- {
---     "#1": {
---         "education": {
+--     "education": [
+--         {
 --             "PhD": "Computer Science"
 --         },
---         "addresses": [
---             "2 Edward Square",
---             "La Mar 10"
---         ],
---         "age": 38,
---         "name": "Pepe"
---     },
---     "#2": {
---         "addresses": [
---             "2 Edward Square",
---             "La Mar 10"
---         ],
---         "age": 38,
---         "studies": {
---             "PhD": "Computer Science"
---         },
---         "name": "Pepe"
---     }
+--         {
+--             "Degree": "Engineering"
+--         }
+--     ],
+--     "addresses": [
+--         "2 Edward Square",
+--         "La Mar 10"
+--     ],
+--     "age": 38,
+--     "name": "Pepe"
 -- }
 
 -- Person2 is a subtype of Person therefore we can encode a Person2 as a Person
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
--- >>> B.putStrLn $ encodePretty $ encodeTo (theSchema @Person) <*> pure pepe2
+-- >>> B.putStrLn $ encodePretty $ fromRight undefined (encodeTo (theSchema @Person)) pepe2
 -- {
 --     "addresses": [
 --         "2 Edward Square",
@@ -138,279 +123,109 @@ pepe2 = Person2 "Pepe"
 
 -- We can also upgrade a Person into a Person2, because the new field is optional
 -- >>> import Text.Pretty.Simple
--- >>> pPrintNoColor $ decodeFrom @Person2 (theSchema @Person) <*> pure (encode pepe)
--- Just
---     ( Right
---         ( Person2
---             { name = "Pepe"
---             , age = 38
---             , addresses =
---                 [ "2 Edward Square"
---                 , "La Mar 10"
---                 ]
---             , religion = Nothing
---             , education = PhD { unPhD = "Computer Science" }
---             }
---         )
+-- >>> pPrintNoColor $ fromRight undefined (decodeFrom @Person2 (theSchema @Person)) (encode pepe)
+-- Right 
+--     ( Person2 
+--         { name = "Pepe" 
+--         , age = Just 38
+--         , addresses = 
+--             [ "2 Edward Square" 
+--             , "La Mar 10" 
+--             ] 
+--         , religion = Nothing
+--         , education = PhD { unPhD = "Computer Science" } :| []
+--         } 
 --     )
 
 -- >>> B.putStrLn $ encodePretty $ encode (theSchema @Person2)
 -- {
---     "AllOf": [
---         {
---             "Record": {
---                 "education": {
---                     "schema": {
---                         "Union": [
---                             {
---                                 "schema": {
---                                     "Empty": {}
---                                 },
---                                 "constructor": "NoEducation"
+--     "Record": {
+--         "education": {
+--             "schema": {
+--                 "Array": {
+--                     "Union": [
+--                         {
+--                             "schema": {
+--                                 "Prim": "String"
 --                             },
---                             {
---                                 "schema": {
---                                     "Prim": "String"
---                                 },
---                                 "constructor": "PhD"
+--                             "constructor": "Degree"
+--                         },
+--                         {
+--                             "schema": {
+--                                 "Prim": "String"
 --                             },
---                             {
---                                 "schema": {
---                                     "Prim": "String"
---                                 },
---                                 "constructor": "Degree"
---                             }
---                         ]
---                     }
---                 },
---                 "religion": {
---                     "schema": {
---                         "Enum": [
---                             "Catholic",
---                             "Anglican",
---                             "Muslim",
---                             "Hindu"
---                         ]
---                     },
---                     "isRequired": false
---                 },
---                 "addresses": {
---                     "schema": {
---                         "Array": {
---                             "Prim": "String"
+--                             "constructor": "PhD"
+--                         },
+--                         {
+--                             "schema": {
+--                                 "Record": {}
+--                             },
+--                             "constructor": "NoEducation"
 --                         }
---                     }
---                 },
---                 "age": {
---                     "schema": {
---                         "Prim": "Int"
---                     }
---                 },
---                 "name": {
---                     "schema": {
---                         "Prim": "String"
---                     }
+--                     ]
 --                 }
 --             }
 --         },
---         {
---             "Record": {
---                 "religion": {
---                     "schema": {
---                         "Enum": [
---                             "Catholic",
---                             "Anglican",
---                             "Muslim",
---                             "Hindu"
---                         ]
---                     },
---                     "isRequired": false
---                 },
---                 "addresses": {
---                     "schema": {
---                         "Array": {
---                             "Prim": "String"
---                         }
---                     }
---                 },
---                 "age": {
---                     "schema": {
---                         "Prim": "Int"
---                     }
---                 },
---                 "studies": {
---                     "schema": {
---                         "Union": [
---                             {
---                                 "schema": {
---                                     "Empty": {}
---                                 },
---                                 "constructor": "NoEducation"
---                             },
---                             {
---                                 "schema": {
---                                     "Prim": "String"
---                                 },
---                                 "constructor": "PhD"
---                             },
---                             {
---                                 "schema": {
---                                     "Prim": "String"
---                                 },
---                                 "constructor": "Degree"
---                             }
---                         ]
---                     }
---                 },
---                 "name": {
---                     "schema": {
---                         "Prim": "String"
---                     }
+--         "religion": {
+--             "schema": {
+--                 "Enum": [
+--                     "Catholic",
+--                     "Anglican",
+--                     "Muslim",
+--                     "Hindu"
+--                 ]
+--             },
+--             "isRequired": false
+--         },
+--         "addresses": {
+--             "schema": {
+--                 "Array": {
+--                     "Prim": "String"
 --                 }
 --             }
+--         },
+--         "age": {
+--             "schema": {
+--                 "Prim": "Integer"
+--             },
+--             "isRequired": false
+--         },
+--         "name": {
+--             "schema": {
+--                 "Prim": "String"
+--             }
 --         }
---     ]
+--     }
 -- }
 
--- >>> import qualified Data.ByteString.Lazy.Char8 as B
--- {
---     "Record": {
---         "education": {
---             "schema": {
---                 "Union": [
---                     {
---                         "schema": {
---                             "Empty": {}
---                         },
---                         "constructor": "NoEducation"
---                     },
---                     {
---                         "schema": {
---                             "Prim": "String"
---                         },
---                         "constructor": "PhD"
---                     },
---                     {
---                         "schema": {
---                             "Prim": "String"
---                         },
---                         "constructor": "Degree"
---                     }
---                 ]
---             }
---         },
---         "religion": {
---             "schema": {
---                 "Enum": [
---                     "Catholic",
---                     "Anglican",
---                     "Muslim",
---                     "Hindu"
---                 ]
---             },
---             "isRequired": false
---         },
---         "addresses": {
---             "schema": {
---                 "Array": {
---                     "Prim": "String"
---                 }
---             }
---         },
---         "age": {
---             "schema": {
---                 "Prim": "Int"
---             }
---         },
---         "name": {
---             "schema": {
---                 "Prim": "String"
---             }
---         }
---     }
--- }
--- {
---     "Record": {
---         "religion": {
---             "schema": {
---                 "Enum": [
---                     "Catholic",
---                     "Anglican",
---                     "Muslim",
---                     "Hindu"
---                 ]
---             },
---             "isRequired": false
---         },
---         "addresses": {
---             "schema": {
---                 "Array": {
---                     "Prim": "String"
---                 }
---             }
---         },
---         "age": {
---             "schema": {
---                 "Prim": "Int"
---             }
---         },
---         "studies": {
---             "schema": {
---                 "Union": [
---                     {
---                         "schema": {
---                             "Empty": {}
---                         },
---                         "constructor": "NoEducation"
---                     },
---                     {
---                         "schema": {
---                             "Prim": "String"
---                         },
---                         "constructor": "PhD"
---                     },
---                     {
---                         "schema": {
---                             "Prim": "String"
---                         },
---                         "constructor": "Degree"
---                     }
---                 ]
---             }
---         },
---         "name": {
---             "schema": {
---                 "Prim": "String"
---             }
---         }
---     }
--- }
 -- >>> import Data.Aeson.Encode.Pretty
--- >>> mapM_ (B.putStrLn . encodePretty . encode) (versions $ theSchema @Person2)
+-- >>> mapM_ (B.putStrLn . encodePretty . encode) (extractSchema $ schema @Person2)
 -- {
 --     "Record": {
 --         "education": {
 --             "schema": {
---                 "Union": [
---                     {
---                         "schema": {
---                             "Empty": {}
+--                 "Array": {
+--                     "Union": [
+--                         {
+--                             "schema": {
+--                                 "Prim": "String"
+--                             },
+--                             "constructor": "Degree"
 --                         },
---                         "constructor": "NoEducation"
---                     },
---                     {
---                         "schema": {
---                             "Prim": "String"
+--                         {
+--                             "schema": {
+--                                 "Prim": "String"
+--                             },
+--                             "constructor": "PhD"
 --                         },
---                         "constructor": "PhD"
---                     },
---                     {
---                         "schema": {
---                             "Prim": "String"
---                         },
---                         "constructor": "Degree"
---                     }
---                 ]
+--                         {
+--                             "schema": {
+--                                 "Record": {}
+--                             },
+--                             "constructor": "NoEducation"
+--                         }
+--                     ]
+--                 }
 --             }
 --         },
 --         "religion": {
@@ -433,7 +248,123 @@ pepe2 = Person2 "Pepe"
 --         },
 --         "age": {
 --             "schema": {
---                 "Prim": "Int"
+--                 "Prim": "Integer"
+--             },
+--             "isRequired": false
+--         },
+--         "name": {
+--             "schema": {
+--                 "Prim": "String"
+--             }
+--         }
+--     }
+-- }
+-- {
+--     "Record": {
+--         "religion": {
+--             "schema": {
+--                 "Enum": [
+--                     "Catholic",
+--                     "Anglican",
+--                     "Muslim",
+--                     "Hindu"
+--                 ]
+--             },
+--             "isRequired": false
+--         },
+--         "addresses": {
+--             "schema": {
+--                 "Array": {
+--                     "Prim": "String"
+--                 }
+--             }
+--         },
+--         "age": {
+--             "schema": {
+--                 "Prim": "Integer"
+--             },
+--             "isRequired": false
+--         },
+--         "studies": {
+--             "schema": {
+--                 "Union": [
+--                     {
+--                         "schema": {
+--                             "Prim": "String"
+--                         },
+--                         "constructor": "Degree"
+--                     },
+--                     {
+--                         "schema": {
+--                             "Prim": "String"
+--                         },
+--                         "constructor": "PhD"
+--                     },
+--                     {
+--                         "schema": {
+--                             "Record": {}
+--                         },
+--                         "constructor": "NoEducation"
+--                     }
+--                 ]
+--             }
+--         },
+--         "name": {
+--             "schema": {
+--                 "Prim": "String"
+--             }
+--         }
+--     }
+-- }
+-- {
+--     "Record": {
+--         "education": {
+--             "schema": {
+--                 "Array": {
+--                     "Union": [
+--                         {
+--                             "schema": {
+--                                 "Prim": "String"
+--                             },
+--                             "constructor": "Degree"
+--                         },
+--                         {
+--                             "schema": {
+--                                 "Prim": "String"
+--                             },
+--                             "constructor": "PhD"
+--                         },
+--                         {
+--                             "schema": {
+--                                 "Record": {}
+--                             },
+--                             "constructor": "NoEducation"
+--                         }
+--                     ]
+--                 }
+--             }
+--         },
+--         "religion": {
+--             "schema": {
+--                 "Enum": [
+--                     "Catholic",
+--                     "Anglican",
+--                     "Muslim",
+--                     "Hindu"
+--                 ]
+--             },
+--             "isRequired": false
+--         },
+--         "addresses": {
+--             "schema": {
+--                 "Array": {
+--                     "Prim": "String"
+--                 }
+--             }
+--         },
+--         "age": {
+--             "schema": {
+--                 "Prim": "Integer"
 --             }
 --         },
 --         "name": {
@@ -465,7 +396,7 @@ pepe2 = Person2 "Pepe"
 --         },
 --         "age": {
 --             "schema": {
---                 "Prim": "Int"
+--                 "Prim": "Integer"
 --             }
 --         },
 --         "studies": {
@@ -473,9 +404,9 @@ pepe2 = Person2 "Pepe"
 --                 "Union": [
 --                     {
 --                         "schema": {
---                             "Empty": {}
+--                             "Prim": "String"
 --                         },
---                         "constructor": "NoEducation"
+--                         "constructor": "Degree"
 --                     },
 --                     {
 --                         "schema": {
@@ -485,9 +416,9 @@ pepe2 = Person2 "Pepe"
 --                     },
 --                     {
 --                         "schema": {
---                             "Prim": "String"
+--                             "Record": {}
 --                         },
---                         "constructor": "Degree"
+--                         "constructor": "NoEducation"
 --                     }
 --                 ]
 --             }

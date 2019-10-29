@@ -38,7 +38,7 @@ specExample ex = do
   --    NE.toList (extractSchema (schema @a)) `shouldContain` NE.toList genSchemas
   it "can encode to generic schema" $ do
      let encoder = encodeTo genSchema
-     shouldNotLoop $ evaluate encoder
+     shouldNotDiverge $ evaluate encoder
      encoder `shouldSatisfy` isRight
      fromRight undefined encoder ex `shouldBe` encodeWith genSchemaTyped ex
   it "can decode from generic schema" $ do
@@ -46,9 +46,9 @@ specExample ex = do
          encoded = encode ex
          decoded = fromRight undefined decoder encoded
          decodedG = decodeWith genSchemaTyped encoded
-     shouldNotLoop $ evaluate decoder
-     shouldNotLoop $ evaluate encoded
-     shouldNotLoop $ evaluate decoded
-     shouldNotLoop $ evaluate decodedG
+     shouldNotDiverge $ evaluate decoder
+     shouldNotDiverge $ evaluate encoded
+     shouldNotDiverge $ evaluate decoded
+     shouldNotDiverge $ evaluate decodedG
      decoder `shouldSatisfy` isRight
      decodedG `shouldBe` decoded
