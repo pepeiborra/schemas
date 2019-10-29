@@ -82,6 +82,7 @@ test-suite spec
                      , Person4
                      , SchemasSpec
                      , Schemas.OpenApi2Spec
+                     , Schemas.SOPSpec
                      , Generators
   build-depends:       aeson
                      , aeson-pretty
