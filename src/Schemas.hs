@@ -53,6 +53,7 @@ module Schemas
   , stringMap
   , viaJSON
   , viaIso
+  , named
   -- *** Applicative record definition
   , record
   , RecordFields
@@ -92,8 +93,14 @@ module Schemas
   , decodeFromWith
   , DecodeError
 
-  -- ** working with recursive schemas
-  , named
+  -- ** Results
+  , Result
+  , runResult
+  , runDelay
+  , IterAlt
+  , retractAlt
+  , Attempt
+  , runAttempt
 
   -- * Untyped schemas
   , Schema(.., Unit, Union)
@@ -119,4 +126,4 @@ import Data.Profunctor
 import Schemas.Class
 import Schemas.Internal as Typed
 import Schemas.Untyped
-
+import Schemas.Attempt

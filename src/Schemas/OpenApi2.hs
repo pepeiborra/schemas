@@ -27,6 +27,7 @@ import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Except
 import           Control.Monad.Trans.Writer
 import           Data.Aeson                 (Value)
+import           Data.Function
 import           Data.Functor
 import           Data.HashMap.Strict        (HashMap)
 import qualified Data.HashMap.Strict        as Map
@@ -44,7 +45,7 @@ import           Schemas.SOP
 --   Failures are omitted, use 'toOpenApi2Document' if you care.
 encodeAsOpenApi2Document :: OpenApi2Options -> Text -> Schema -> Value
 encodeAsOpenApi2Document opts n sc =
-  encode $ toOpenApi2Document opts (Map.fromList [(n, sc)])
+  encode & ($ toOpenApi2Document opts (Map.fromList [(n, sc)]))
 
 -- | A catalog of definitions
 data OpenApi2Document = OpenApi2Document
@@ -77,7 +78,7 @@ data OpenApi2Schema = OpenApi2Schema
   , properties           :: Maybe (HashMap Text OpenApi2Schema)
   , required             :: Maybe [Text]
   }
-  deriving (Generic, Show)
+  deriving (Eq, Generic, Show)
   deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
 
 instance HasSchema OpenApi2Schema where
@@ -136,7 +137,7 @@ toOpenApi2
   :: (Text -> Maybe OpenApi2Schema)
   -> Schema
   -> WriterT OpenApi2Document (Except Reason) OpenApi2Schema
-toOpenApi2 prim Empty = lift $ throwE $ Unsupported "empty"
+toOpenApi2 _rim Empty = lift $ throwE $ Unsupported "empty"
 toOpenApi2 prim (Array sc) = toOpenApi2 prim sc
   <&> \sc2 -> (defOpenApi2Schema OpenApi2Array) { items = Just sc2 }
 toOpenApi2 prim (StringMap sc) = toOpenApi2 prim sc <&> \sc2 ->

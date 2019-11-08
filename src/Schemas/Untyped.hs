@@ -160,7 +160,7 @@ data Mismatch
   = MissingRecordField { name :: Text }
   | MissingEnumChoices { choices :: NonEmpty Text }
   | OptionalRecordField { name :: Text }
-  | InvalidRecordField { name :: Text, mismatches :: [(Trace, Mismatch)] }
+  | InvalidRecordField { name :: Text}
   | InvalidEnumValue   { given :: Text, options :: NonEmpty Text}
   | InvalidRecordValue { value :: Value }
   | InvalidConstructor { name :: Text}

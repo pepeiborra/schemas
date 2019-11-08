@@ -3,12 +3,12 @@
 module Schemas.SOPSpec where
 
 import           Control.Exception
-import           Data.Either
 import qualified Data.List.NonEmpty       as NE
 import           Person
 import           Person2
 import           Person4
 import           Schemas
+import qualified Schemas.Attempt as Attempt
 import           Schemas.SOP
 import           SchemasSpec
 import           Test.Hspec
@@ -38,17 +38,21 @@ specExample ex = do
   --    NE.toList (extractSchema (schema @a)) `shouldContain` NE.toList genSchemas
   it "can encode to generic schema" $ do
      let encoder = encodeTo genSchema
+         encoded = (encodeWith genSchemaTyped) ex
+         encodedTyped = attemptSuccessOrError encoder ex
      shouldNotDiverge $ evaluate encoder
-     encoder `shouldSatisfy` isRight
-     fromRight undefined encoder ex `shouldBe` encodeWith genSchemaTyped ex
+     encoder `shouldSatisfy` Attempt.isSuccess
+     shouldNotDiverge $ evaluate encoded
+     shouldNotDiverge $ evaluate $ encodedTyped
+     encodedTyped `shouldBe` encoded
   it "can decode from generic schema" $ do
      let decoder = decodeFrom genSchema
          encoded = encode ex
-         decoded = fromRight undefined decoder encoded
+         decoded = getSuccessOrError decoder encoded
          decodedG = decodeWith genSchemaTyped encoded
      shouldNotDiverge $ evaluate decoder
      shouldNotDiverge $ evaluate encoded
      shouldNotDiverge $ evaluate decoded
      shouldNotDiverge $ evaluate decodedG
-     decoder `shouldSatisfy` isRight
+     decoder `shouldSatisfy` isSuccess
      decodedG `shouldBe` decoded

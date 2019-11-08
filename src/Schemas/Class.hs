@@ -23,6 +23,7 @@ import           Data.Scientific
 import           Data.Text            (Text, pack, unpack)
 import           Data.Vector          (Vector)
 import           Numeric.Natural
+import           Schemas.Attempt
 import           Schemas.Internal
 import           Schemas.Untyped
 
@@ -160,22 +161,22 @@ validatorsFor :: forall a . HasSchema a => Validators
 validatorsFor = extractValidators (schema @a)
 
 -- | encode using the default schema
-encode :: HasSchema a => a -> Value
+encode :: HasSchema a => (a -> Value)
 encode = encodeWith schema
 
 -- | Attempt to encode to the target schema using the default schema.
 --   First encodes using the default schema, then computes a coercion
 --   applying 'isSubtypeOf', and then applies the coercion to the encoded data.
-encodeTo :: HasSchema a => Schema -> Either [(Trace, Mismatch)] (a -> Value)
+encodeTo :: HasSchema a => Schema -> Attempt E (a -> Value)
 encodeTo = encodeToWith schema
 
 -- | Decode using the default schema.
-decode :: HasSchema a => Value -> Either [(Trace, DecodeError)] a
+decode :: HasSchema a => Value -> Result a
 decode = decodeWith schema
 
 -- | Apply `isSubtypeOf` to construct a coercion from the source schema to the default schema,
 --   apply the coercion to the data, and attempt to decode using the default schema.
-decodeFrom :: HasSchema a => Schema -> Either [(Trace, DecodeError)] (Value -> Either [(Trace, DecodeError)] a)
+decodeFrom :: HasSchema a => Schema -> Result (Value -> Result a)
 decodeFrom = decodeFromWith schema
 
 -- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
@@ -200,7 +201,7 @@ optFieldEither
     -> (from -> Either e a)
     -> e
     -> RecordFields from (Either e a)
-optFieldEither n f e = optFieldEitherWith (lmap f (liftPrism _Right schema mempty)) n e
+optFieldEither n f e = optFieldEitherWith (lmap f (liftRight schema)) n e
 
 -- | @alt name prism@ introduces a discriminated union alternative with the default schema
 alt :: HasSchema a => Prism' from a -> UnionAlt from
