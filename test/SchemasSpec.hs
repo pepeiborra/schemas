@@ -1,59 +1,87 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ImpredicativeTypes  #-}
 {-# LANGUAGE OverloadedLists     #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 module SchemasSpec where
 
 import           Control.Exception
-import           Control.Lens (_Just, _Nothing)
-import           Control.Monad.Trans.Except
+import           Control.Lens (_Just, _Nothing, _Empty, _Cons)
+import           Control.Monad (join)
+import           Control.Monad.Trans (lift)
 import qualified Data.Aeson                 as A
-import           Data.Coerce
-import           Data.Either
 import           Data.Foldable
-import           Data.Functor.Identity
 import qualified Data.List.NonEmpty        as NE
 import           Data.Maybe
+import           Data.Void
 import           Generators
+import           Looper
 import           Person
 import           Person2
 import           Person3
 import           Person4
 import           Schemas
+import qualified Schemas.Attempt            as Attempt
 import           Schemas.Untyped            (Validators)
 import           System.Timeout
 import           Test.Hspec
-import           Test.Hspec.QuickCheck
-import           Test.Hspec.Runner
-import           Test.QuickCheck
+import           Test.Hspec.QuickCheck      (prop)
+import           Test.Hspec.Runner          (configQuickCheckMaxSuccess, hspecWith, defaultConfig)
+import           Test.QuickCheck            (sized, forAll, suchThat)
 import           Text.Show.Functions        ()
 
 main :: IO ()
 main = hspecWith defaultConfig{configQuickCheckMaxSuccess = Just 10000} spec
 
+listSchema :: HasSchema a => TypedSchema [a]
+listSchema = named "list" $ union
+  [ ("Nil", alt _Empty)
+  , ( "Cons"
+    , altWith
+      (record $ (,) <$> field "head" fst <*> fieldWith listSchema "tail" snd)
+      _Cons
+    )
+  ]
+
 spec :: Spec
 spec = do
   describe "encode" $ do
+    it "prims"  $ do
+      let encoder = encode
+      shouldNotDiverge $ evaluate encoder
+      shouldNotDiverge $ evaluate $ encoder True
+    it "unions" $ do
+      let encoder = encode
+      shouldNotDiverge $ evaluate encoder
+      shouldNotDiverge $ evaluate $ encoder (Left ())
+      shouldNotDiverge $ evaluate $ encoder (Right ())
+    it "recursive schemas" $ do
+      let encoder = (encodeWith listSchema)
+      shouldNotDiverge $ evaluate encoder
+      shouldNotDiverge $ evaluate $ encoder [()]
     prop "is the inverse of decoding" $ \(sc :: Schema) ->
-      decode (encode sc) ==  Right sc
+      getSuccess (pure encode >>= decode . ($ sc)) == Just sc
   describe "encodeTo" $ do
     it "is lazy" $ do
-      evaluate (fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [makeField "bottom" prim True])) (Nothing :: Maybe Bool))
+      evaluate (attemptSuccessOrError (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [makeField "bottom" prim True])) (Nothing :: Maybe Bool))
         `shouldThrow` \(_ :: SomeException) -> True
-      fromRight undefined (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
-        `shouldBe` A.Object []
-  describe "canEncode" $ do
-    it "Empty to itself" $ do
-      mempty`shouldBeAbleToEncodeTo` [Empty]
-    it "Unions of 1 constructor" $ do
-      union [("Just", alt (_Just @()))] `shouldBeAbleToEncodeTo` [Union [("Just", Unit)]]
+      let encoded = attemptSuccessOrError (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
+      encoded `shouldBe` A.Object []
   describe "extractSchema" $ do
+    it "Named" $
+      shouldNotDiverge $ evaluate $ extractSchema $ schema @Schema
     it "Unions" $
       extractSchema (union [("Just", alt (_Just @())), ("Nothing", alt _Nothing)])
         `shouldBe` [Union [("Nothing", Unit) ,("Just", Unit)]]
+  describe "canEncode" $ do
+    it "Empty to itself" $ do
+      mempty @(TypedSchema Void) `shouldBeAbleToEncodeTo` [Empty]
+    it "Unions of 1 constructor" $ do
+      union [("Just", alt (_Just @()))] `shouldBeAbleToEncodeTo` [Union [("Just", Unit)]]
   describe "isSubtypeOf" $ do
     it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       sc `shouldBeSubtypeOf` sc
@@ -102,6 +130,8 @@ spec = do
       shouldBeAbleToDecode @(Either () ()) [Union [constructor' "left" Unit]]
       -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "left" Unit]]
   describe "examples" $ do
+    describe "Schema" $
+      schemaSpec schema (theSchema @Person2)
     let   person4_v0 = theSchema @Person4
           person2_v0 = theSchema @Person2
           person2_v2 = extractSchema (schema @Person2) NE.!! 2
@@ -122,31 +152,36 @@ spec = do
          -- shouldBeAbleToDecode @Person (extractSchema @Person2 schema)
       it "pepe2 `as` Person" $ do
         let encoder = encodeTo (theSchema @Person)
-        encoder `shouldSatisfy` isRight
-        decode (fromRight undefined encoder pepe2) `shouldBe` Right pepe
+            encoded = attemptSuccessOrError encoder pepe2
+        encoder `shouldSatisfy` Attempt.isSuccess
+        decode (encoded) `shouldBe` Success pepe
       it "pepe `as` Person2" $ do
         let decoder = decodeFrom (theSchema @Person)
-        decoder `shouldSatisfy` isRight
-        fromRight undefined decoder (encode pepe) `shouldBe` Right pepe2{Person2.education = [Person.studies pepe]}
+        decoder `shouldSatisfy` isSuccess
+        (pure encode >>= getSuccessOrError decoder . ($ pepe))
+          `shouldBe` Success pepe2{Person2.education = [Person.studies pepe]}
       it "Person < Person2" $ do
         -- shouldBeAbleToEncode @Person  (extractSchema @Person2 schema)
         shouldBeAbleToDecode @Person2 (extractSchema @Person schema)
     describe "Person3" $ do
+      -- disabled because encode diverges and does not support IterT yet
+      -- schemaSpec schema pepe3
       it "can show the Person 3 (circular) schema" $
         shouldNotDiverge $ evaluate $ length $ show $ theSchema @Person3
       it "can compute an encoder for Person3 (circular schema)" $
         shouldNotDiverge $ evaluate encoder_p3v0
       it "can encode a finite example" $ do
+
         shouldNotDiverge $ evaluate $ encode martin
-        shouldNotDiverge $ evaluate $ fromRight undefined encoder_p3v0 martin
+        shouldNotDiverge $ evaluate $ attemptSuccessOrError encoder_p3v0 martin
     describe "Person4" $ do
       schemaSpec schema pepe4
-      let encoded_pepe4 = fromRight undefined encoder_p4v0 pepe4
-          encoded_pepe3 = fromRight undefined encoder_p3_to_p4 pepe3{Person3.spouse = Nothing}
-          encoded_pepe2 = fromRight undefined encoder_p2v0 pepe2
+      let encoded_pepe4 = attemptSuccessOrError encoder_p4v0 pepe4
+          encoded_pepe3 = attemptSuccessOrError encoder_p3_to_p4 pepe3{Person3.spouse = Nothing}
+          encoded_pepe2 = attemptSuccessOrError encoder_p2v0 pepe2
       it "can compute an encoder for Person4" $ do
         shouldNotDiverge $ evaluate encoder_p4v0
-        encoder_p4v0 `shouldSatisfy` isRight
+        encoder_p4v0 `shouldSatisfy` Attempt.isSuccess
       it "can compute an encoder to Person3 in finite time" $ do
         shouldNotDiverge $ evaluate encoder_p3_to_p4
       it "can compute an encoder to Person2 in finite time" $ do
@@ -156,41 +191,53 @@ spec = do
       it "can encode a Person2 as Person4 in finite time" $ do
         shouldNotDiverge $ evaluate $ A.encode encoded_pepe2
       it "can decode a fully defined record with source schema" $ do
-        let res = fromRight undefined (decodeFrom person4_v0) encoded_pepe4
+        let res = getSuccessOrError (decodeFrom person4_v0) encoded_pepe4
         shouldNotDiverge $ evaluate res
-        res `shouldBe` Right pepe4
+        res `shouldBe` Success pepe4
       it "can decode a fully defined record without source schema" $ do
         let res = decode encoded_pepe4
         shouldNotDiverge $ evaluate res
-        res `shouldBe` Right pepe4
+        res `shouldBe` Success pepe4
       it "cannot construct a Person2 v0 decoder" $
-        decoder_p2v0 `shouldSatisfy` isLeft
+        decoder_p2v0 `shouldSatisfy` isFailure
       it "can construct a Person2 v1 decoder" $
-        decoder_p2v2 `shouldSatisfy` isRight
+        decoder_p2v2 `shouldSatisfy` isSuccess
       it "can decode a Person2 v1" $ do
-        let res = fromRight undefined decoder_p2v2 encoded_pepe2
-            holds = res == Right pepe4
+        let res = getSuccessOrError decoder_p2v2 encoded_pepe2
+            holds = res == Success pepe4
         shouldNotDiverge $ evaluate holds
         shouldNotDiverge $ evaluate $ length $ show res
-        res `shouldBe` Right pepe4
+        res `shouldBe` Success pepe4
+    describe "Looper" $ do
+      schemaSpec schema looper1
 
-schemaSpec :: (Eq a, Show a) => TypedSchema a -> a -> Spec
+schemaSpec :: forall a. (Eq a, Show a) => TypedSchema a -> a -> Spec
 schemaSpec sc ex = do
-  let encoder = encodeToWith sc (NE.head $ extractSchema sc)
-      decoder = decodeFromWith sc (NE.head $ extractSchema sc)
-      encodedExample = fromRight undefined encoder ex
-  it "Can encode itself" $
-    encoder `shouldSatisfy` isRight
-  it "Can decode itself" $
-    decoder `shouldSatisfy` isRight
+  let encoder = encodeToWith sc s
+      decoder = decodeFromWith sc s
+      s = NE.head $ extractSchema sc
+      encodedExample = attemptSuccessOrError encoder ex
+  it "Can extract untyped schema" $
+    shouldNotDiverge $ evaluate s
+  it "Can encode itself" $ do
+    shouldNotDiverge $ evaluate encoder
+    encoder `shouldSatisfy` Attempt.isSuccess
+  it "Can decode itself" $ do
+    shouldNotDiverge $ evaluate decoder
+    decoder `shouldSatisfy` isSuccess
+  it "Does not diverge decoding bad input" $ do
+     let d = join $ Attempt.attemptSuccess $ runDelay 100 $ decodeFromWith sc (NE.head $ extractSchema sc)
+     shouldNotDiverge $ evaluate $ d
+     shouldNotDiverge $ evaluate $ join $ join $ Attempt.attemptSuccess $ runDelay 100 $ traverse ($ A.String "Foo") d
   it "Roundtrips ex" $ do
-    let res = fromRight undefined decoder encodedExample
+    let res = getSuccessOrError decoder encodedExample
+    shouldNotDiverge $ evaluate encodedExample
     shouldNotDiverge $ evaluate res
-    res `shouldBe` Right ex
+    runResult 1000 res `shouldBe` Right (Just ex)
   it "Roundtrips ex (2)" $ do
-    let res = decodeWith sc (encodeWith sc ex)
+    let res = pure (encodeWith sc) >>= decodeWith sc . ($ ex)
     shouldNotDiverge $ evaluate res
-    res `shouldBe` Right ex
+    runResult 1000 res `shouldBe` Right (Just ex)
 
 shouldBeSubtypeOf :: HasCallStack => Schema -> Schema -> Expectation
 shouldBeSubtypeOf a b = case isSubtypeOf primValidators a b of
@@ -205,27 +252,25 @@ shouldNotBeSubtypeOf a b = case isSubtypeOf primValidators a b of
 shouldDiverge :: (HasCallStack, Show a) => IO a -> Expectation
 shouldDiverge act = do
   res <- timeout 1000000 act
-  res `shouldSatisfy` isNothing
+  case res of
+    Just{} -> expectationFailure "Did not diverge"
+    Nothing -> return ()
 
 shouldNotDiverge :: (HasCallStack, Show a) => IO a -> Expectation
 shouldNotDiverge act = do
   res <- timeout 1000000 act
-  res `shouldSatisfy` isJust
+  case res of
+    Nothing -> error "Did not terminate after 1s"
+    Just {} -> return ()
 
 shouldBeAbleToEncode :: forall a . HasCallStack => (HasSchema a) => NE.NonEmpty Schema -> Expectation
 shouldBeAbleToEncode = shouldBeAbleToEncodeTo (schema @a)
 
 shouldBeAbleToEncodeTo :: forall a . HasCallStack => TypedSchema a -> NE.NonEmpty Schema -> Expectation
-shouldBeAbleToEncodeTo tsc sc = asumEither (fmap (encodeToWith tsc) sc) `shouldSatisfy` isRight
+shouldBeAbleToEncodeTo tsc sc = asum (fmap (encodeToWith tsc) sc) `shouldSatisfy` Attempt.isSuccess
 
 shouldBeAbleToDecode :: forall a . HasCallStack => (HasSchema a) => NE.NonEmpty Schema -> Expectation
-shouldBeAbleToDecode sc = asumEither (fmap (decodeFrom @a) sc) `shouldSatisfy` isRight
-
-asumEither :: forall e a . (Monoid e) => NE.NonEmpty (Either e a) -> Either e a
-asumEither = Data.Coerce.coerce asumExcept
-  where
-    asumExcept :: NE.NonEmpty (Except e a) -> Except e a
-    asumExcept = asum
+shouldBeAbleToDecode sc = asum (fmap (decodeFrom @a) sc) `shouldSatisfy` isSuccess
 
 makeField :: a -> Schema -> Bool -> (a, Field)
 makeField n t isReq = (n, Field t isReq)
@@ -238,3 +283,23 @@ prim = Prim "A"
 
 primValidators :: Validators
 primValidators = validatorsFor @(Schema, Double, Int, Bool)
+
+getSuccessOrError :: Result a -> a
+getSuccessOrError =  either (error . show) (fromMaybe (error "too many delays")) . Attempt.runAttempt . runDelay 5
+
+attemptSuccessOrError :: Show e => Attempt.Attempt e a -> a
+attemptSuccessOrError (Attempt.Success s) = s
+attemptSuccessOrError (Attempt.Failure e) = error (show e)
+
+pattern Success :: a -> Result a
+pattern Success x <- (runDelay 1000 -> Attempt.Success (Just x))
+  where Success x = lift $ Attempt.Success x
+
+getSuccess :: Result a -> Maybe a
+getSuccess = join . Attempt.attemptSuccess . runDelay 45
+
+isSuccess :: Result a -> Bool
+isSuccess = isJust . getSuccess
+
+isFailure :: Result a -> Bool
+isFailure = not . isSuccess

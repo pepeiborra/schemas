@@ -53,7 +53,7 @@ gRecordFields opts = case datatypeInfo (Proxy @a) of
 gSchemaNS :: forall xss . All2 FieldEncode xss => Options -> NP ConstructorInfo xss -> TypedSchema (NS (NP I) xss)
 gSchemaNS opts ci =
     case mkAlts ci of
-      [] -> mempty
+      [] -> error "empty union"
       other -> union $ NE.fromList other
     where
         mkAlts = hcollapse . hczipWith3 (Proxy :: Proxy (All FieldEncode)) mk (injections @_ @(NP I)) (ejections  @_ @(NP I))

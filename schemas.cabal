@@ -46,6 +46,8 @@ library
     Schemas.Class
     Schemas.Internal
     Schemas.OpenApi2
+    Schemas.Delay
+    Schemas.Attempt
     Schemas.SOP
     Schemas.Untyped
   -- other-modules:
@@ -59,6 +61,7 @@ library
                      , hashable
                      , lens
                      , lens-aeson
+                     , mtl
                      , profunctors
                      , scientific
                      , text
@@ -80,6 +83,7 @@ test-suite spec
                      , Person2
                      , Person3
                      , Person4
+                     , Looper
                      , SchemasSpec
                      , Schemas.OpenApi2Spec
                      , Schemas.SOPSpec
@@ -92,6 +96,7 @@ test-suite spec
                      , generics-sop
                      , hspec
                      , lens
+                     , mtl
                      , pretty-simple
                      , QuickCheck
                      , schemas
