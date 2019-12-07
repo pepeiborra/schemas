@@ -1,0 +1,10 @@
+cradle: 
+#  cabal: 
+#    component: spec
+  direct:
+    arguments:
+      - -isrc
+      - -itest
+      - -iexample
+      - -Wall
+      - -XTypeApplications
