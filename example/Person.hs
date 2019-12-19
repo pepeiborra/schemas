@@ -59,7 +59,7 @@ pepe = Person
 --     "name": "Pepe"
 -- }
 
--- >>> B.putStrLn $ encodePretty $ encode (theSchema @Person)
+-- >>> B.putStrLn $ encodePretty $ encode (schemaFor @Person)
 -- {
 --     "Record": {
 --         "addresses": {

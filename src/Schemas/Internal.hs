@@ -286,37 +286,39 @@ extractFieldsHelper f = runAlt_ (\x -> (: []) <$> f x) . getRecordFields
 -- --------------------------------------------------------------------------------
 -- Typed Unions
 
--- | The schema of discriminated unions
---
--- @
---   import Schemas
---   import "generic-lens" Data.Generics.Labels ()
---   import GHC.Generics
---
---   data Education = Degree Text | PhD Text | NoEducation
---
---   schemaEducation = union'
---     [ alt \"NoEducation\" #_NoEducation
---     , alt \"Degree\"      #_Degree
---     , alt \"PhD\"         #_PhD
---     ]
---   @
-
 
 -- | An alternative in a union type
 data UnionAlt from where
   UnionAlt :: Prism' from b -> TypedSchema b -> UnionAlt from
 
+-- | Declare an alternative in a union type
 altWith :: TypedSchema a -> Prism' from a -> UnionAlt from
 altWith sc p = UnionAlt p sc
 
 -- | Discriminated unions that record the name of the chosen constructor in the schema
+-- @
+--   data Education = Degree Text | PhD Text | NoEducation
+--
+--   schemaEducation = union'
+--     [ (\"NoEducation\", alt #_NoEducation)
+--     , (\"Degree\"     , alt #_Degree)
+--     , (\"PhD\"        , alt #_PhD)
+--     ]
+--   @
 union :: (NonEmpty ((Text,UnionAlt from))) -> TypedSchema from
 union (a :| rest) = go (a:rest) where
   go ((n, UnionAlt p sc) : rest) = liftPrism p (RecordSchema $ fieldWith' sc n) $ go rest
   go [] = TEmpty absurd (error "incomplete union definition")
 
 -- | Undiscriminated union that do not record the name of the constructor in the schema
+--   data Education = Degree Text | PhD Text | NoEducation
+--
+--   schemaEducation = oneOf
+--     [ alt #_NoEducation
+--     , alt #_Degree
+--     , alt #_PhD
+--     ]
+--   @
 oneOf :: (NonEmpty (UnionAlt from)) -> TypedSchema from
 oneOf (a :| rest) = go (a:rest) where
   go (UnionAlt p sc : rest) = liftPrism p sc $ go rest
@@ -382,7 +384,7 @@ extractValidators = go where
 -- ---------------------------------------------------------------------------------------
 -- Results
 
-type E = [(Trace, Mismatch)]
+type TracedMismatches = [(Trace, Mismatch)]
 
 newtype IterAltT m a = IterAlt {runIterAlt :: IterT m a}
   deriving newtype (Applicative, Functor, Monad, MonadError e, MonadState s, MonadTrans, MonadFree Identity, Eq, Show)
@@ -402,46 +404,19 @@ instance (MonadPlus m) => Alternative (IterAltT m) where
              Just (Right more_b) -> pure $ Right (more_a <|> more_b)
 
 
-type IterAlt = IterAltT Identity
-type Result = IterAltT (Attempt E)
-
-liftIterAlt :: Monad m => IterAlt a -> IterAltT m a
-liftIterAlt = IterAlt . liftIter . runIterAlt
-
-retractAlt :: IterAlt a -> a
-retractAlt = runIdentity . retract . runIterAlt
-
-hoistIterAlt :: Monad n => (forall a . m a -> n a) -> IterAltT m a -> IterAltT n a
-hoistIterAlt f = IterAlt . hoistIterT f . runIterAlt
-
 runDelay :: Monad m => Natural -> IterAltT m a -> m (Maybe a)
 runDelay n = retract . cutoff (fromIntegral n) . runIterAlt
 
-runDelayUnbounded :: Monad m => IterAltT m a -> m a
-runDelayUnbounded = retract . runIterAlt
+-- | A monad encapsulating failure as well as non-termination
+newtype Result a = Result { getResult :: IterAltT (Attempt TracedMismatches) a}
+  deriving newtype (Applicative, Alternative, Functor, Monad, MonadError TracedMismatches, MonadFree Identity, Eq, Show)
 
-runResult :: MonadError E g => Natural -> Result a -> g (Maybe a)
-runResult maxSteps = execAttempt . runDelay maxSteps
+liftAttempt :: Attempt TracedMismatches a -> Result a
+liftAttempt  = Result . lift
 
-execResult :: MonadError E f => Result a -> Iter (f a)
-execResult = undefined -- ABSURD
-
-observeResult :: Result a -> Result (Either E a)
-observeResult = undefined -- ABSURD
-
-anotherImpossible :: MonadPlus m => IterAltT [] a -> IterAltT m [a]
--- anotherImpossible = hoistIterT (\case [] -> empty ; xx -> pure xx)
--- anotherImpossible = liftIter . wouldBeNice
-anotherImpossible = liftIterAlt . IterAlt . interleave . fmap runIterAlt . mightDo
-
-wouldBeNice :: IterT m a -> Iter (m a)
-wouldBeNice = undefined
-
-mightDo :: Monad m => IterAltT m a -> m (IterAlt a)
-mightDo = runIterT . runIterAlt >=> f
-  where
-    f (Left l) = pure $ pure l
-    f (Right r) = mightDo (coerce r)
+-- | Run a 'Result' up with bounded depth. Returns nothing if it runs out of steps.
+runResult :: MonadError TracedMismatches g => Natural -> Result a -> g (Maybe a)
+runResult maxSteps = execAttempt . runDelay maxSteps . getResult
 
 -- ---------------------------------------------------------------------------------------
 -- Encoding to JSON
@@ -453,11 +428,11 @@ encodeWith :: TypedSchemaFlex from a -> (from -> Value)
 encodeWith sc = ensureSuccess encoder
   where
     encoder = encodeToWith sc (NE.head $ extractSchema sc)
-    ensureSuccess = either (error.show) id . runAttempt
+    ensureSuccess = either (error.show) id
 
 -- | Given source and target schemas, produce a JSON encoder
-encodeToWith :: TypedSchemaFlex from a -> Schema -> Attempt E (from -> Value)
-encodeToWith sc target =
+encodeToWith :: TypedSchemaFlex from a -> Schema -> Either TracedMismatches (from -> Value)
+encodeToWith sc target = runAttempt $
   (fmap.fmap) (fromMaybe (error "Empty schema")) $
   (go [] [] sc (target))
  where
@@ -465,11 +440,11 @@ encodeToWith sc target =
 
   go
     :: forall from a
-     . [(SchemaName, Attempt E (Void -> Maybe Value))]
+     . [(SchemaName, Attempt TracedMismatches (Void -> Maybe Value))]
     -> Trace
     -> TypedSchemaFlex from a
     -> Schema
-    -> Attempt E (from -> Maybe Value)
+    -> Attempt TracedMismatches (from -> Maybe Value)
   -- go _ _ sc s | pTraceShow ("encode", sc, s) False = undefined
   go env ctx (TNamed n sct _ fromf) (Named n' sc) | n == n' =
     case lookup n env of
@@ -553,13 +528,11 @@ encodeToWith sc target =
 -- --------------------------------------------------------------------------
 -- Decoding
 
-type DecodeError = Mismatch
-
 -- | Runs a schema as a function @enc -> dec@. Loops for infinite/circular data
-runSchema :: TypedSchemaFlex enc dec -> enc -> Either [DecodeError] dec
+runSchema :: TypedSchemaFlex enc dec -> enc -> Either [Mismatch] dec
 runSchema sc = runExcept . go sc
  where
-  go :: forall from a . TypedSchemaFlex from a -> from -> Except [DecodeError] a
+  go :: forall from a . TypedSchemaFlex from a -> from -> Except [Mismatch] a
   go (TPure              x) _    = pure x
   go (TEmpty toF fromF    ) x    = pure $ toF $ fromF x
   -- TODO handle circular data
@@ -577,7 +550,7 @@ runSchema sc = runExcept . go sc
   go (TOneOf sc sc' toF fF) from = toF <$> bitraverse (go sc) (go sc') (fF from)
   go (RecordSchema alts   ) from = runAlt f (getRecordFields alts)
    where
-    f :: RecordField from b -> Except [DecodeError] b
+    f :: RecordField from b -> Except [Mismatch] b
     f RequiredAp {..} = go fieldTypedSchema from
     f OptionalAp {..} = go fieldTypedSchema from
 
@@ -611,18 +584,18 @@ decodeFromWith
   :: TypedSchemaFlex from a -> Schema -> Result(Value -> Result a)
 -- TODO merge runSchema and decodeFromWith ?
 -- TODO expose non-termination as an effect
-decodeFromWith sc source =  todoExposeNonTermination $ go [] [] sc source
+decodeFromWith sc source =  Result $ todoExposeNonTermination $ go [] [] sc source
  where
   todoExposeNonTermination = lift
 
   failWith ctx e = throwError [(reverse ctx, e)]
 
   go
-    :: [(SchemaName, Attempt E (Value -> Result Void))]
+    :: [(SchemaName, Attempt TracedMismatches (Value -> Result Void))]
     -> Trace
     -> TypedSchemaFlex from a
     -> Schema
-    -> Attempt E (Value -> Result a)
+    -> Attempt TracedMismatches (Value -> Result a)
   -- go _ _ t s | pTraceShow ("decode", t,s) False = undefined
   go _nv _tx (TPure a) Unit  = pure $ \_ -> pure a
   go _   ctx  TEmpty{} Empty = pure $ const $ failWith ctx EmptySchema

@@ -12,9 +12,12 @@ module SchemasSpec where
 import           Control.Exception
 import           Control.Lens (_Just, _Nothing, _Empty, _Cons)
 import           Control.Monad (join)
-import           Control.Monad.Trans (lift)
+import           Control.Monad.Trans.Except (Except, ExceptT(..))
 import qualified Data.Aeson                 as A
+import qualified Data.Coerce
+import           Data.Either
 import           Data.Foldable
+import           Data.Functor.Identity
 import qualified Data.List.NonEmpty        as NE
 import           Data.Maybe
 import           Data.Void
@@ -26,6 +29,7 @@ import           Person3
 import           Person4
 import           Schemas
 import qualified Schemas.Attempt            as Attempt
+import           Schemas.Internal           (liftAttempt)
 import           Schemas.Untyped            (Validators)
 import           System.Timeout
 import           Test.Hspec
@@ -131,11 +135,11 @@ spec = do
       -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "left" Unit]]
   describe "examples" $ do
     describe "Schema" $
-      schemaSpec schema (theSchema @Person2)
-    let   person4_v0 = theSchema @Person4
-          person2_v0 = theSchema @Person2
+      schemaSpec schema (schemaFor @Person2)
+    let   person4_v0 = schemaFor @Person4
+          person2_v0 = schemaFor @Person2
           person2_v2 = extractSchema (schema @Person2) NE.!! 2
-          person3_v0 = theSchema @Person3
+          person3_v0 = schemaFor @Person3
           person4_vPerson3 = person3_v0
           encoder_p4v0 = encodeTo person4_v0
           encoder_p3_to_p4 = encodeTo person4_vPerson3
@@ -151,12 +155,12 @@ spec = do
          shouldBeAbleToEncode @Person2 (extractSchema @Person schema)
          -- shouldBeAbleToDecode @Person (extractSchema @Person2 schema)
       it "pepe2 `as` Person" $ do
-        let encoder = encodeTo (theSchema @Person)
+        let encoder = encodeTo (schemaFor @Person)
             encoded = attemptSuccessOrError encoder pepe2
-        encoder `shouldSatisfy` Attempt.isSuccess
+        encoder `shouldSatisfy` isRight
         decode (encoded) `shouldBe` Success pepe
       it "pepe `as` Person2" $ do
-        let decoder = decodeFrom (theSchema @Person)
+        let decoder = decodeFrom (schemaFor @Person)
         decoder `shouldSatisfy` isSuccess
         (pure encode >>= getSuccessOrError decoder . ($ pepe))
           `shouldBe` Success pepe2{Person2.education = [Person.studies pepe]}
@@ -167,7 +171,7 @@ spec = do
       -- disabled because encode diverges and does not support IterT yet
       -- schemaSpec schema pepe3
       it "can show the Person 3 (circular) schema" $
-        shouldNotDiverge $ evaluate $ length $ show $ theSchema @Person3
+        shouldNotDiverge $ evaluate $ length $ show $ schemaFor @Person3
       it "can compute an encoder for Person3 (circular schema)" $
         shouldNotDiverge $ evaluate encoder_p3v0
       it "can encode a finite example" $ do
@@ -181,7 +185,7 @@ spec = do
           encoded_pepe2 = attemptSuccessOrError encoder_p2v0 pepe2
       it "can compute an encoder for Person4" $ do
         shouldNotDiverge $ evaluate encoder_p4v0
-        encoder_p4v0 `shouldSatisfy` Attempt.isSuccess
+        encoder_p4v0 `shouldSatisfy` isRight
       it "can compute an encoder to Person3 in finite time" $ do
         shouldNotDiverge $ evaluate encoder_p3_to_p4
       it "can compute an encoder to Person2 in finite time" $ do
@@ -221,14 +225,14 @@ schemaSpec sc ex = do
     shouldNotDiverge $ evaluate s
   it "Can encode itself" $ do
     shouldNotDiverge $ evaluate encoder
-    encoder `shouldSatisfy` Attempt.isSuccess
+    encoder `shouldSatisfy` isRight
   it "Can decode itself" $ do
     shouldNotDiverge $ evaluate decoder
     decoder `shouldSatisfy` isSuccess
   it "Does not diverge decoding bad input" $ do
-     let d = join $ Attempt.attemptSuccess $ runDelay 100 $ decodeFromWith sc (NE.head $ extractSchema sc)
+     let d = join $ Attempt.attemptSuccess $ runResult 1000 $ decodeFromWith sc (NE.head $ extractSchema sc)
      shouldNotDiverge $ evaluate $ d
-     shouldNotDiverge $ evaluate $ join $ join $ Attempt.attemptSuccess $ runDelay 100 $ traverse ($ A.String "Foo") d
+     shouldNotDiverge $ evaluate $ join $ join $ Attempt.attemptSuccess $ runResult 1000 $ traverse ($ A.String "Foo") d
   it "Roundtrips ex" $ do
     let res = getSuccessOrError decoder encodedExample
     shouldNotDiverge $ evaluate encodedExample
@@ -267,7 +271,7 @@ shouldBeAbleToEncode :: forall a . HasCallStack => (HasSchema a) => NE.NonEmpty 
 shouldBeAbleToEncode = shouldBeAbleToEncodeTo (schema @a)
 
 shouldBeAbleToEncodeTo :: forall a . HasCallStack => TypedSchema a -> NE.NonEmpty Schema -> Expectation
-shouldBeAbleToEncodeTo tsc sc = asum (fmap (encodeToWith tsc) sc) `shouldSatisfy` Attempt.isSuccess
+shouldBeAbleToEncodeTo tsc sc = asumEither (fmap (encodeToWith tsc) sc) `shouldSatisfy` isRight
 
 shouldBeAbleToDecode :: forall a . HasCallStack => (HasSchema a) => NE.NonEmpty Schema -> Expectation
 shouldBeAbleToDecode sc = asum (fmap (decodeFrom @a) sc) `shouldSatisfy` isSuccess
@@ -285,21 +289,26 @@ primValidators :: Validators
 primValidators = validatorsFor @(Schema, Double, Int, Bool)
 
 getSuccessOrError :: Result a -> a
-getSuccessOrError =  either (error . show) (fromMaybe (error "too many delays")) . Attempt.runAttempt . runDelay 5
+getSuccessOrError =  either (error . show) (fromMaybe (error "too many delays")) . Attempt.runAttempt . runResult 1000
 
-attemptSuccessOrError :: Show e => Attempt.Attempt e a -> a
-attemptSuccessOrError (Attempt.Success s) = s
-attemptSuccessOrError (Attempt.Failure e) = error (show e)
+attemptSuccessOrError :: Show e => Either e a -> a
+attemptSuccessOrError = either (error.show) id
 
 pattern Success :: a -> Result a
-pattern Success x <- (runDelay 1000 -> Attempt.Success (Just x))
-  where Success x = lift $ Attempt.Success x
+pattern Success x <- (runResult 1000 -> Attempt.Success (Just x))
+  where Success x = liftAttempt $ Attempt.Success x
 
 getSuccess :: Result a -> Maybe a
-getSuccess = join . Attempt.attemptSuccess . runDelay 45
+getSuccess = join . Attempt.attemptSuccess . runResult 1000
 
 isSuccess :: Result a -> Bool
 isSuccess = isJust . getSuccess
 
 isFailure :: Result a -> Bool
 isFailure = not . isSuccess
+
+asumEither :: forall e a . (Monoid e) => NE.NonEmpty (Either e a) -> Either e a
+asumEither = Data.Coerce.coerce asumExcept
+  where
+    asumExcept :: NE.NonEmpty (Except e a) -> Except e a
+    asumExcept = asum

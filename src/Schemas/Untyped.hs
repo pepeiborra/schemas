@@ -52,7 +52,7 @@ instance Show SchemaName where show (SchemaName s) = s
 
 -- | A schema for untyped data, such as JSON or XML.
 --
---   * introduction forms: 'extractSchema', 'theSchema', 'mempty'
+--   * introduction forms: 'extractSchema', 'schemaFor', 'mempty'
 --   * operations: 'isSubtypeOf', 'versions', 'coerce', 'validate'
 --   * composition: '(<>)'
 data Schema
@@ -183,7 +183,7 @@ instance Exception Mismatch
 type Validators = HashMap Text ValidatePrim
 type ValidatePrim = Value -> Maybe Text
 
--- | Structural validation of a JSON value against a schema
+-- | Structural validation of a JSON value against a schema.
 --   Ignores extraneous fields in records
 validate :: Validators -> Schema -> Value -> [(Trace, Mismatch)]
 validate validators sc v = either (fmap (first reverse)) (\() -> []) $ runExcept (go [] sc v) where

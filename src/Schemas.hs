@@ -91,16 +91,10 @@ module Schemas
   , decodeWith
   , encodeToWith
   , decodeFromWith
-  , DecodeError
 
   -- ** Results
   , Result
   , runResult
-  , runDelay
-  , IterAlt
-  , retractAlt
-  , Attempt
-  , runAttempt
 
   -- * Untyped schemas
   , Schema(.., Unit, Union)
@@ -109,13 +103,16 @@ module Schemas
   , _Union
   -- ** Extraction
   , extractSchema
-  , theSchema
+  , schemaFor
   -- ** Functions
   , Mismatch(..)
   , Trace
+  , TracedMismatches
   , isSubtypeOf
   , coerce
+  -- * Validation
   , validate
+  , extractValidators
   , validatorsFor
   -- * Reexports
   , Profunctor(..)
@@ -126,4 +123,3 @@ import Data.Profunctor
 import Schemas.Class
 import Schemas.Internal as Typed
 import Schemas.Untyped
-import Schemas.Attempt
