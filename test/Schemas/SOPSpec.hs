@@ -3,12 +3,12 @@
 module Schemas.SOPSpec where
 
 import           Control.Exception
+import           Data.Either
 import qualified Data.List.NonEmpty       as NE
 import           Person
 import           Person2
 import           Person4
 import           Schemas
-import qualified Schemas.Attempt as Attempt
 import           Schemas.SOP
 import           SchemasSpec
 import           Test.Hspec
@@ -41,7 +41,7 @@ specExample ex = do
          encoded = (encodeWith genSchemaTyped) ex
          encodedTyped = attemptSuccessOrError encoder ex
      shouldNotDiverge $ evaluate encoder
-     encoder `shouldSatisfy` Attempt.isSuccess
+     encoder `shouldSatisfy` isRight
      shouldNotDiverge $ evaluate encoded
      shouldNotDiverge $ evaluate $ encodedTyped
      encodedTyped `shouldBe` encoded

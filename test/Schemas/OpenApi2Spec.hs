@@ -14,7 +14,7 @@ import           Test.Hspec
 
 spec :: Spec
 spec = do
-  let personDocument = toOpenApi2Document defaultOptions [("Person", theSchema @Person)]
+  let personDocument = toOpenApi2Document defaultOptions [("Person", schemaFor @Person)]
   describe "OpenApi2 schema" $
     schemaSpec schema (definitions personDocument Map.! "Person")
   describe "toOpenApi2Document" $ do
@@ -22,6 +22,6 @@ spec = do
       Map.keys (definitions personDocument) `shouldContain` ["Person"]
       Map.keys (failures personDocument) `shouldNotContain` ["Person"]
     it "works for Person2" $ do
-      let document = toOpenApi2Document defaultOptions [("Person2", theSchema @Person2)]
+      let document = toOpenApi2Document defaultOptions [("Person2", schemaFor @Person2)]
       Map.keys (definitions document) `shouldContain` ["Person2"]
       Map.keys (failures document) `shouldNotContain` ["Person2"]

@@ -23,7 +23,6 @@ import           Data.Scientific
 import           Data.Text            (Text, pack, unpack)
 import           Data.Vector          (Vector)
 import           Numeric.Natural
-import           Schemas.Attempt
 import           Schemas.Internal
 import           Schemas.Untyped
 
@@ -154,8 +153,8 @@ instance Key String where
 -- HasSchema aware combinators
 -- -----------------------------------------------------------------------------------
 -- | Extract the default 'Schema' for a type
-theSchema :: forall a . HasSchema a => Schema
-theSchema = case extractSchema (schema @a) of x :| _ -> x
+schemaFor :: forall a . HasSchema a => Schema
+schemaFor = case extractSchema (schema @a) of x :| _ -> x
 
 validatorsFor :: forall a . HasSchema a => Validators
 validatorsFor = extractValidators (schema @a)
@@ -167,7 +166,7 @@ encode = encodeWith schema
 -- | Attempt to encode to the target schema using the default schema.
 --   First encodes using the default schema, then computes a coercion
 --   applying 'isSubtypeOf', and then applies the coercion to the encoded data.
-encodeTo :: HasSchema a => Schema -> Attempt E (a -> Value)
+encodeTo :: HasSchema a => Schema -> Either TracedMismatches (a -> Value)
 encodeTo = encodeToWith schema
 
 -- | Decode using the default schema.
@@ -179,9 +178,9 @@ decode = decodeWith schema
 decodeFrom :: HasSchema a => Schema -> Result (Value -> Result a)
 decodeFrom = decodeFromWith schema
 
--- | Coerce from 'sub' to 'sup'Returns 'Nothing' if 'sub' is not a subtype of 'sup'
+-- | Coerce from 'sub' to 'sup'. Returns 'Nothing' if 'sub' is not a subtype of 'sup'
 coerce :: forall sub sup . (HasSchema sub, HasSchema sup) => Value -> Maybe Value
-coerce = case isSubtypeOf (validatorsFor @sub) (theSchema @sub) (theSchema @sup) of
+coerce = case isSubtypeOf (validatorsFor @sub) (schemaFor @sub) (schemaFor @sup) of
   Right cast -> Just . cast
   _          -> const Nothing
 

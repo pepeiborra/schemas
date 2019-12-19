@@ -67,7 +67,7 @@ pepe2 = Person2 "Pepe"
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
 -- >>> import Data.Either
--- >>> B.putStrLn $ encodePretty $ fromRight undefined (encodeTo (theSchema @Person2)) pepe2
+-- >>> B.putStrLn $ encodePretty $ fromRight undefined (encodeTo (schemaFor @Person2)) pepe2
 -- {
 --     "education": [
 --         {
@@ -107,7 +107,7 @@ pepe2 = Person2 "Pepe"
 -- Person2 is a subtype of Person therefore we can encode a Person2 as a Person
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
--- >>> B.putStrLn $ encodePretty $ fromRight undefined (encodeTo (theSchema @Person)) pepe2
+-- >>> B.putStrLn $ encodePretty $ fromRight undefined (encodeTo (schemaFor @Person)) pepe2
 -- {
 --     "addresses": [
 --         "2 Edward Square",
@@ -123,7 +123,7 @@ pepe2 = Person2 "Pepe"
 
 -- We can also upgrade a Person into a Person2, because the new field is optional
 -- >>> import Text.Pretty.Simple
--- >>> pPrintNoColor $ fromRight undefined (decodeFrom @Person2 (theSchema @Person)) (encode pepe)
+-- >>> pPrintNoColor $ fromRight undefined (decodeFrom @Person2 (schemaFor @Person)) (encode pepe)
 -- Right 
 --     ( Person2 
 --         { name = "Pepe" 
@@ -137,7 +137,7 @@ pepe2 = Person2 "Pepe"
 --         } 
 --     )
 
--- >>> B.putStrLn $ encodePretty $ encode (theSchema @Person2)
+-- >>> B.putStrLn $ encodePretty $ encode (schemaFor @Person2)
 -- {
 --     "Record": {
 --         "education": {
