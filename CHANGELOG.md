@@ -1,4 +1,12 @@
 # Revision history for schemas
+## 0.4 -- 2019-12-20
+* Handle non-termination as an effect in decoding
+* Union api made more consistent across tagged and non tagged
+* (internal) More principled TypedSchema ADT based on Sum Profunctors
+* Total version of 'liftPrism'
+* 'theSchema' renamed to 'schemaFor'
+* Bugfixes for decoding
+
 ## 0.3.0.2 --  2019-10-29
 * Show circular schemas
 
