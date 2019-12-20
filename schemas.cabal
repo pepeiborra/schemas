@@ -1,6 +1,6 @@
 cabal-version:       2.0
 name:                schemas
-version:             0.3.0.2
+version:             0.4.0.0
 synopsis:            schema guided serialization
 description:
   Schemas is a Haskell library for serializing and deserializing data in JSON.
