@@ -1,5 +1,5 @@
 # Revision history for schemas
-## 0.4 -- 2019-12-20
+## 0.4.0 -- 2019-12-20
 * Handle non-termination as an effect in decoding
 * Union api made more consistent across tagged and non tagged
 * (internal) More principled TypedSchema ADT based on Sum Profunctors
@@ -9,10 +9,6 @@
 
 ## 0.3.0.2 --  2019-10-29
 * Show circular schemas
-
-## 0.4.0
-* 'oneOf' and 'liftPrism' now have a better type signature
-* 'UnionTag' renamed to 'UnionAlt'
 
 ## 0.3.0.1 --  2019-10-25
 * Fix a bug that made OpenApi2 generation diverge.
