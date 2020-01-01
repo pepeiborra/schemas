@@ -208,13 +208,14 @@ instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
   dimap f g (OptionalAp name sc v) = OptionalAp name (dimap f g sc) (g v)
 
--- | An 'Alternative' profunctor for defining record schemas with versioning
+-- | An 'Alternative' profunctor for defining record schemas with versioning.
 --
 -- @
 --  schemaPerson = Person
 --             \<$\> (field "name" name \<|\> field "full name" name)
 --             \<*\> (field "age" age \<|\> pure -1)
 -- @
+-- Alternatives are searched greedily in a top-down order.
 newtype RecordFields from a = RecordFields {getRecordFields :: Alt (RecordField from) a}
   deriving newtype (Alternative, Applicative, Functor, Monoid, Semigroup)
 
@@ -296,6 +297,7 @@ altWith :: TypedSchema a -> Prism' from a -> UnionAlt from
 altWith sc p = UnionAlt p sc
 
 -- | Discriminated unions that record the name of the chosen constructor in the schema
+--
 -- @
 --   data Education = Degree Text | PhD Text | NoEducation
 --
@@ -311,6 +313,8 @@ union (a :| rest) = go (a:rest) where
   go [] = TEmpty absurd (error "incomplete union definition")
 
 -- | Undiscriminated union that do not record the name of the constructor in the schema
+--
+-- @
 --   data Education = Degree Text | PhD Text | NoEducation
 --
 --   schemaEducation = oneOf
@@ -319,6 +323,7 @@ union (a :| rest) = go (a:rest) where
 --     , alt #_PhD
 --     ]
 --   @
+-- Alternatives are searched greedily in a top-down order.
 oneOf :: (NonEmpty (UnionAlt from)) -> TypedSchema from
 oneOf (a :| rest) = go (a:rest) where
   go (UnionAlt p sc : rest) = liftPrism p sc $ go rest
@@ -391,18 +396,7 @@ newtype IterAltT m a = IterAlt {runIterAlt :: IterT m a}
 
 instance (MonadPlus m) => Alternative (IterAltT m) where
   empty = IterAlt (lift empty)
-  IterAlt (IterT ma) <|> IterAlt (IterT mb) = IterAlt $ IterT $
-    do a <- optional ma
-       case a of
-         Nothing -> mb
-         Just (Left done) -> pure (Left done)
-         Just (Right more_a) -> do
-           b <- optional mb
-           case b of
-             Nothing -> pure $ Right more_a
-             Just (Left done) -> pure (Left done)
-             Just (Right more_b) -> pure $ Right (more_a <|> more_b)
-
+  IterAlt a <|> IterAlt b = IterAlt $ IterT $ runIterT a <|> runIterT b
 
 runDelay :: Monad m => Natural -> IterAltT m a -> m (Maybe a)
 runDelay n = retract . cutoff (fromIntegral n) . runIterAlt
@@ -644,7 +638,9 @@ decodeFromWith sc source =  Result $ todoExposeNonTermination $ go [] [] sc sour
   go env ctx (TOneOf sc sc' tof _) src = do
     let parserL = runAttempt $ (Left <.>) <$> go env ctx sc src
     let parserR = runAttempt $ (Right <.>) <$> go env ctx sc' src
-    case partitionEithers [parserL, parserR] of
+    -- parserR comes first
+    -- This is because of how liftPrism and oneOf work
+    case partitionEithers [parserR, parserL] of
       (ee, []) -> failWith ctx (AllAlternativesFailed (concat ee))
       (_ , pp) -> do
         pure $ \x -> tof <$> asum (map ($ x) pp)

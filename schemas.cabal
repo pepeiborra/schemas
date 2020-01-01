@@ -13,11 +13,11 @@ description:
   schemas, and the source is a subtype of the target, source values can be encoded
   in the target schema.
   .
-  The library also supports @oneOf@ and @allOf@ schemas, which extend the
+  The library also supports @oneOf@ schemas, which extend the
   range of versioning changes that can be supported automatically without
   resorting to explicit versions and conversion functions.
   .
-  A type class @HasSchema@ is provided purely for convenience, but none of the
+  A type class @HasSchema@ is provided for convenience, but none of the
   core functions in the library rely on type classes.
   .
   Schemas can be derived generically using @generics-sop@, although most of the
@@ -46,7 +46,6 @@ library
     Schemas.Class
     Schemas.Internal
     Schemas.OpenApi2
-    Schemas.Delay
     Schemas.Attempt
     Schemas.SOP
     Schemas.Untyped
