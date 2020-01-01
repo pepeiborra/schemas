@@ -633,7 +633,9 @@ decodeFromWith sc source =  Result $ todoExposeNonTermination $ go [] [] sc sour
   go env ctx (TOneOf sc sc' tof _) src = do
     let parserL = runAttempt $ (Left <.>) <$> go env ctx sc src
     let parserR = runAttempt $ (Right <.>) <$> go env ctx sc' src
-    case partitionEithers [parserL, parserR] of
+    -- parserR comes first
+    -- This is because of how liftPrism and oneOf work
+    case partitionEithers [parserR, parserL] of
       (ee, []) -> failWith ctx (AllAlternativesFailed (concat ee))
       (_ , pp) -> do
         pure $ \x -> tof <$> asum (map ($ x) pp)
