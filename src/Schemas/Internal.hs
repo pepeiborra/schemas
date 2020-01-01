@@ -296,6 +296,7 @@ altWith :: TypedSchema a -> Prism' from a -> UnionAlt from
 altWith sc p = UnionAlt p sc
 
 -- | Discriminated unions that record the name of the chosen constructor in the schema
+--
 -- @
 --   data Education = Degree Text | PhD Text | NoEducation
 --
@@ -311,6 +312,8 @@ union (a :| rest) = go (a:rest) where
   go [] = TEmpty absurd (error "incomplete union definition")
 
 -- | Undiscriminated union that do not record the name of the constructor in the schema
+--
+-- @
 --   data Education = Degree Text | PhD Text | NoEducation
 --
 --   schemaEducation = oneOf
