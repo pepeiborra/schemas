@@ -1,4 +1,7 @@
 # Revision history for schemas
+## 0.4.0.1 -- 2020-01-01
+* Replace breadth-first search with a greedy depth-first search
+
 ## 0.4.0 -- 2019-12-20
 * Handle non-termination as an effect in decoding
 * Union api made more consistent across tagged and non tagged
