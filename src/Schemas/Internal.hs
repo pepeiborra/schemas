@@ -391,18 +391,7 @@ newtype IterAltT m a = IterAlt {runIterAlt :: IterT m a}
 
 instance (MonadPlus m) => Alternative (IterAltT m) where
   empty = IterAlt (lift empty)
-  IterAlt (IterT ma) <|> IterAlt (IterT mb) = IterAlt $ IterT $
-    do a <- optional ma
-       case a of
-         Nothing -> mb
-         Just (Left done) -> pure (Left done)
-         Just (Right more_a) -> do
-           b <- optional mb
-           case b of
-             Nothing -> pure $ Right more_a
-             Just (Left done) -> pure (Left done)
-             Just (Right more_b) -> pure $ Right (more_a <|> more_b)
-
+  IterAlt a <|> IterAlt b = IterAlt $ IterT $ runIterT a <|> runIterT b
 
 runDelay :: Monad m => Natural -> IterAltT m a -> m (Maybe a)
 runDelay n = retract . cutoff (fromIntegral n) . runIterAlt
