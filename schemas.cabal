@@ -46,7 +46,6 @@ library
     Schemas.Class
     Schemas.Internal
     Schemas.OpenApi2
-    Schemas.Delay
     Schemas.Attempt
     Schemas.SOP
     Schemas.Untyped
