@@ -208,13 +208,14 @@ instance Profunctor RecordField where
   dimap f g (RequiredAp name sc) = RequiredAp name (dimap f g sc)
   dimap f g (OptionalAp name sc v) = OptionalAp name (dimap f g sc) (g v)
 
--- | An 'Alternative' profunctor for defining record schemas with versioning
+-- | An 'Alternative' profunctor for defining record schemas with versioning.
 --
 -- @
 --  schemaPerson = Person
 --             \<$\> (field "name" name \<|\> field "full name" name)
 --             \<*\> (field "age" age \<|\> pure -1)
 -- @
+-- Alternatives are searched greedily in a top-down order.
 newtype RecordFields from a = RecordFields {getRecordFields :: Alt (RecordField from) a}
   deriving newtype (Alternative, Applicative, Functor, Monoid, Semigroup)
 
@@ -322,6 +323,7 @@ union (a :| rest) = go (a:rest) where
 --     , alt #_PhD
 --     ]
 --   @
+-- Alternatives are searched greedily in a top-down order.
 oneOf :: (NonEmpty (UnionAlt from)) -> TypedSchema from
 oneOf (a :| rest) = go (a:rest) where
   go (UnionAlt p sc : rest) = liftPrism p sc $ go rest
