@@ -33,7 +33,7 @@ class HasSchema a where
   schema :: TypedSchema a
 
 instance HasSchema () where
-  schema = TPure ()
+  schema = lmap (\() -> undefined) $ pureSchema ()
 
 instance HasSchema Bool where
   schema = viaJSON "Boolean"

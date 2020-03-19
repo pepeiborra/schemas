@@ -21,7 +21,7 @@
 module Schemas.Internal where
 
 import           Control.Alternative.Free
-import           Control.Applicative        (Alternative (..), optional)
+import           Control.Applicative        (Alternative (..))
 import           Control.Lens               hiding (Empty, allOf, enum, (<.>))
 import           Control.Monad.Except
 import           Control.Monad.Trans.Iter
@@ -79,7 +79,6 @@ data TypedSchemaFlex from a where
          -> (Either a' a'' -> a)
          -> (from -> Either from' from'')
          -> TypedSchemaFlex from a
-  TPure  :: a -> TypedSchemaFlex from a
   TEmpty :: (Void -> a) -> (from -> Void) -> TypedSchemaFlex from a
   TPrim  :: Text -> (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
   RecordSchema ::RecordFields from a -> TypedSchemaFlex from a
@@ -92,7 +91,6 @@ instance Functor (TypedSchemaFlex from) where
 
 instance Profunctor TypedSchemaFlex where
   dimap g f (TEmpty tof fromf)      = TEmpty (f . tof) (fromf . g)
-  dimap _ f (TPure a)               = TPure (f a)
   dimap g f (TNamed n sc tof fromf) = TNamed n sc (f . tof) (fromf . g)
   dimap g f (TAllOf scc           ) = TAllOf (dimap g f <$> scc)
   dimap g f (TOneOf sca scb to fr ) = TOneOf sca scb (f . to) (fr . g)
@@ -173,9 +171,9 @@ eitherSchema sc sc' = TOneOf sc sc' id id
 emptySchema :: TypedSchema Void
 emptySchema = TEmpty id id
 
--- | The schema that can be decoded but not encoded
-pureSchema :: a -> TypedSchemaFlex from a
-pureSchema = TPure
+-- | The schema that can be trivially decoded and encoded
+pureSchema :: a -> TypedSchemaFlex a a
+pureSchema a = record (pure a)
 
 allOf :: NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
 allOf x   = allOf' $ sconcat $ fmap f x where
@@ -340,7 +338,6 @@ oneOf (a :| rest) = go (a:rest) where
 --   as the number of versions is exponential.
 extractSchema :: TypedSchemaFlex from a -> NonEmpty Schema
 -- extractSchema xx | pTraceShow ("extractSchema") False = undefined
-extractSchema TPure{}          = pure Unit
 extractSchema (TNamed n sc _ _) = Named n <$> extractSchema sc
 extractSchema (TPrim n _  _   ) = pure $ Prim n
 extractSchema (TOneOf s s' _ _) = (<>) <$> extractSchema s <*> extractSchema s'
@@ -450,8 +447,6 @@ encodeToWith sc target = runAttempt $
             resDynLater = (pure . fromMaybe (error "impossible") . attemptSuccess) resDyn
         in  lmap fromf <$> res
   go _ _   _       Empty       = pure $ pure . const emptyValue
-  go _ _tx TPure{} Array{}     = pure $ pure . const (A.Array [])
-  go _ _tx TPure{} StringMap{} = pure $ pure . const (emptyValue)
   go _ _tx (TEmpty _ _)     _  = pure $ const empty
   go _ ctx (TPrim n _ fromf) (Prim n')
     | n == n'   = pure $ pure . fromf
@@ -527,7 +522,6 @@ runSchema :: TypedSchemaFlex enc dec -> enc -> Either [Mismatch] dec
 runSchema sc = runExcept . go sc
  where
   go :: forall from a . TypedSchemaFlex from a -> from -> Except [Mismatch] a
-  go (TPure              x) _    = pure x
   go (TEmpty toF fromF    ) x    = pure $ toF $ fromF x
   -- TODO handle circular data
   go (TNamed _ sc tof fromF) a    = tof <$> go sc (fromF a)
@@ -552,7 +546,6 @@ runSchema sc = runExcept . go sc
 
 -- | Evaluates a schema as a value of type 'dec'. Can only succeed if the schema contains a 'TPure' alternative
 evalSchema :: forall enc dec . TypedSchemaFlex enc dec -> Maybe dec
-evalSchema (TPure x             ) = pure x
 evalSchema  TEmpty{}              = Nothing
 -- TODO handle circular data
 evalSchema (TNamed _ sc tof _) = tof <$> evalSchema sc
@@ -591,7 +584,6 @@ decodeFromWith sc source =  Result $ todoExposeNonTermination $ go [] [] sc sour
     -> Schema
     -> Attempt TracedMismatches (Value -> Result a)
   -- go _ _ t s | pTraceShow ("decode", t,s) False = undefined
-  go _nv _tx (TPure a) Unit  = pure $ \_ -> pure a
   go _   ctx  TEmpty{} Empty = pure $ const $ failWith ctx EmptySchema
   go env ctx (TNamed n sc tof _) (Named n' s) | n == n' = case lookup n env of
     Just sol ->
