@@ -84,6 +84,7 @@ test-suite spec
                      , Person3
                      , Person4
                      , Looper
+                     , Unions
                      , SchemasSpec
                      , Schemas.OpenApi2Spec
                      , Schemas.SOPSpec
@@ -100,6 +101,7 @@ test-suite spec
                      , pretty-simple
                      , QuickCheck
                      , schemas
+                     , syb
                      , text
                      , transformers
                      , unordered-containers

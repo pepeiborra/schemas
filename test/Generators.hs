@@ -26,11 +26,16 @@ hasOneOf _              = False
 
 instance Arbitrary Schema where
   arbitrary = sized genSchema
+  shrink (Record [(_, Field sc True)]) = [sc]
   shrink (Record fields) =
-    [Record [(n,Field sc' req)] | (n,Field sc req) <- toList fields, sc' <- shrink sc]
-  shrink (OneOf scc) = [OneOf [sc'] | sc <- toList scc, sc' <- shrink sc]
+    [ Record [(n,Field sc' req)]
+    | (n,Field sc req) <- toList fields, sc' <- shrink sc]
+  shrink (OneOf [sc]) = [sc]
+  shrink (OneOf scc) = concat
+      [[OneOf [sc'], sc'] | sc <- toList scc, sc' <- shrink sc]
   shrink (Array sc) = [sc]
   shrink (StringMap sc) = [sc]
+  shrink (Enum xx) = Enum . pure <$> toList xx
   shrink _ = []
 
 newtype SmallNatural = SmallNatural Natural

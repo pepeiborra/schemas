@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -41,11 +42,13 @@ import           GHC.Generics               (Generic)
 import           Prelude                    hiding (lookup)
 import           Text.Read
 import           Text.Show.Functions        ()
+import Data.Data (Data)
 
 -- Schemas
 -- --------------------------------------------------------------------------------
 
 newtype SchemaName = SchemaName String
+  deriving stock (Data)
   deriving newtype (Eq, IsString)
 
 instance Show SchemaName where show (SchemaName s) = s
@@ -61,10 +64,10 @@ data Schema
   | Enum   (NonEmpty Text)
   | Record (HashMap Text Field)
   | OneOf (NonEmpty Schema)   -- ^ Decoding works for all alternatives, encoding only for one
-  | Prim Text                     -- ^ Carries the name of primitive type
+  | Prim Text                 -- ^ Carries the name of primitive type
   | Named SchemaName Schema
-  | Empty
-  deriving (Eq, Generic)
+  | Empty                     -- ^ The void schema
+  deriving (Eq, Data, Generic, Show)
 
 instance Monoid Schema where mempty = Empty
 instance Semigroup Schema where
@@ -74,8 +77,8 @@ instance Semigroup Schema where
   b <> OneOf aa = OneOf ([b] <> aa)
   a <> b        = OneOf [a,b]
 
-instance Show Schema where
-  showsPrec = go []   where
+showsPrecSchema :: Integer -> Schema -> [Char] -> [Char]
+showsPrecSchema = go []   where
     go _een p  Empty          = showParen (p>0) $ ("Empty " ++)
     go seen _ (Array     sc) = (('[' :) . go seen 5 sc . (']' :))
     go seen p (StringMap sc) = showParen (p > 5) (("Map " ++) . go seen 5 sc)
@@ -115,7 +118,7 @@ data Field = Field
   { fieldSchema :: Schema
   , isRequired  :: Bool -- ^ defaults to True
   }
-  deriving (Eq, Generic)
+  deriving (Data, Eq, Generic)
 
 instance Show Field where
   showsPrec p (Field sc True)  = showsPrec p sc

@@ -18,9 +18,9 @@ import qualified Data.Coerce
 import           Data.Either
 import           Data.Foldable
 import           Data.Functor.Identity
+import           Data.Generics
 import qualified Data.List.NonEmpty        as NE
 import           Data.Maybe
-import           Data.Void
 import           Generators
 import           Looper
 import           Person
@@ -33,10 +33,10 @@ import           Schemas.Internal           (liftAttempt)
 import           Schemas.Untyped            (Validators)
 import           System.Timeout
 import           Test.Hspec
-import           Test.Hspec.QuickCheck      (prop)
 import           Test.Hspec.Runner          (configQuickCheckMaxSuccess, hspecWith, defaultConfig)
-import           Test.QuickCheck            (sized, forAll, suchThat)
+import           Test.QuickCheck            (arbitrary, sized, forAll, suchThat)
 import           Text.Show.Functions        ()
+import           Unions
 
 main :: IO ()
 main = hspecWith defaultConfig{configQuickCheckMaxSuccess = Just 10000} spec
@@ -51,9 +51,8 @@ listSchema = named "list" $ union
     )
   ]
 
-spec :: Spec
-spec = do
-  describe "encode" $ do
+encodeSpec :: Spec
+encodeSpec = do
     it "prims"  $ do
       let encoder = encode
       shouldNotDiverge $ evaluate encoder
@@ -63,29 +62,121 @@ spec = do
       shouldNotDiverge $ evaluate encoder
       shouldNotDiverge $ evaluate $ encoder (Left ())
       shouldNotDiverge $ evaluate $ encoder (Right ())
+
     it "recursive schemas" $ do
-      let encoder = (encodeWith listSchema)
+      let encoder = encodeWith listSchema
       shouldNotDiverge $ evaluate encoder
       shouldNotDiverge $ evaluate $ encoder [()]
-    prop "is the inverse of decoding" $ \(sc :: Schema) ->
-      getSuccess (pure encode >>= decode . ($ sc)) == Just sc
-  describe "encodeTo" $ do
+
+    it "is the inverse of decoding for canonical schemas" $
+      forAll (canonical <$> arbitrary) $ \sc ->
+        getSuccess (pure encode >>= decode . ($ sc)) == Just sc
+
+canonical :: Schema -> Schema
+canonical = everywhere (mkT simplify)
+  where
+  simplify (OneOf [x]) = x
+  simplify other = other
+
+encodeToSpec :: Spec
+encodeToSpec = do
     it "is lazy" $ do
       evaluate (attemptSuccessOrError (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [makeField "bottom" prim True])) (Nothing :: Maybe Bool))
         `shouldThrow` \(_ :: SomeException) -> True
-      let encoded = attemptSuccessOrError (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record [])) (Nothing :: Maybe Bool)
+      let encoded =
+            attemptSuccessOrError
+              (encodeToWith (record $ Just <$> field "bottom" fromJust) (Record []))
+              (Nothing :: Maybe Bool)
       encoded `shouldBe` A.Object []
+
+    it "SomeNone Some" $ do
+      let encoded = encodeWith schemaSomeNone (Some ())
+      shouldNotDiverge $ evaluate encoded
+      encoded `shouldBe` A.Object []
+
+    it "NoneSome Some" $ do
+      let encoded = encodeWith schemaNoneSome (Some ())
+      shouldNotDiverge $ evaluate encoded
+      encoded `shouldBe` A.Object []
+
+    it "SomeNone None" $ do
+      let encoded = encodeWith schemaSomeNone (None @(Either () ()))
+      shouldNotDiverge $ evaluate encoded
+      encoded `shouldBe` A.Object []
+
+    it "NoneSome None" $ do
+      let encoded = encodeWith schemaNoneSome (None @(Either () ()))
+      shouldNotDiverge $ evaluate encoded
+      encoded `shouldBe` A.Object []
+
+    it "Three" $ do
+      let encoded = encodeWith (schemaThree schemaNoneSome schema) (Three @(Some ()) @())
+      shouldNotDiverge $ evaluate encoded
+      encoded `shouldBe` A.Object []
+
+    it "Three" $ do
+      let encoded = encodeWith (schemaThree' schema schemaNoneSome) (Three @() @(Some ()))
+      shouldNotDiverge $ evaluate encoded
+      encoded `shouldBe` A.Object []
+
+    describe "Either" $ do
+      let -- A schema supporting both camelCase and lowercase either
+          source :: TypedSchema (Either () ())
+          source = schema
+
+      it "lowerCase" $ do
+        let target = Union [("right", schemaFor @()), ("left", schemaFor @())]
+            encoder = encodeToWith source target
+            Right f = encoder
+        encoder `shouldSatisfy` isRight
+        f (Right ()) `shouldBe` A.object [("right", A.Object [])]
+
+      it "camelCase" $ do
+        let target = Union [("Right", schemaFor @()), ("Left", schemaFor @())]
+            encoder = encodeToWith source target
+            Right f = encoder
+        f (Right ()) `shouldBe` A.object [("Right", A.Object [])]
+
+    describe "Either (nested)" $ do
+      let -- A schema supporting both camelCase and lowercase either
+          source :: TypedSchema (((), Either () ()))
+          source = schema
+
+          wrap sc = Record [("$1", Field (schemaFor @()) True), ("$2", Field sc True)]
+
+          wrapVal v = A.object [("$1", A.Object []), ("$2", v)]
+
+      it "lowerCase" $ do
+        let target = wrap $ Union [("right", schemaFor @()), ("left", schemaFor @())]
+            encoder = encodeToWith source target
+            Right f = encoder
+        encoder `shouldSatisfy` isRight
+        f ((),Right ()) `shouldBe` wrapVal (A.object [("right", A.Object [])])
+
+      it "camelCase" $ do
+        let target = wrap $ Union [("Right", schemaFor @()), ("Left", schemaFor @())]
+            encoder = encodeToWith source target
+            Right f = encoder
+        encoder `shouldSatisfy` isRight
+        f ((),Right ()) `shouldBe` wrapVal (A.object [("Right", A.Object [])])
+
+    describe "canEncode" $ do
+
+      it "Unions of 1 constructor" $ do
+        union [("Just", alt (_Just @()))] `shouldBeAbleToEncodeTo` [Union [("Just", Unit)]]
+
+
+spec :: Spec
+spec = do
+  describe "encode" encodeSpec
+  describe "encodeTo" encodeToSpec
   describe "extractSchema" $ do
     it "Named" $
       shouldNotDiverge $ evaluate $ extractSchema $ schema @Schema
     it "Unions" $
       extractSchema (union [("Just", alt (_Just @())), ("Nothing", alt _Nothing)])
         `shouldBe` [Union [("Nothing", Unit) ,("Just", Unit)]]
-  describe "canEncode" $ do
-    it "Empty to itself" $ do
-      mempty @(TypedSchema Void) `shouldBeAbleToEncodeTo` [Empty]
-    it "Unions of 1 constructor" $ do
-      union [("Just", alt (_Just @()))] `shouldBeAbleToEncodeTo` [Union [("Just", Unit)]]
+
   describe "isSubtypeOf" $ do
     it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       sc `shouldBeSubtypeOf` sc
@@ -126,6 +217,7 @@ spec = do
       prim `shouldBeSubtypeOf` Array prim
     it "subtypes cannot introduce an array" $ do
       Array prim `shouldNotBeSubtypeOf` prim
+
   describe "HasSchema" $ do
     it "Left is a constructor of Either" $ do
       shouldBeAbleToDecode @(Either () ()) [Union [constructor' "Left" Unit]]
@@ -133,6 +225,7 @@ spec = do
     it "left is a constructor of Either too" $ do
       shouldBeAbleToDecode @(Either () ()) [Union [constructor' "left" Unit]]
       -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "left" Unit]]
+
   describe "examples" $ do
     describe "Schema" $
       schemaSpec schema (schemaFor @Person2)
@@ -147,8 +240,28 @@ spec = do
           encoder_p3v0 = encodeTo @Person3 person3_v0
           decoder_p2v0 = decodeFrom @Person4 person2_v0
           decoder_p2v2 = decodeFrom person2_v2
+
+    describe "NoneSome Bool" $
+      schemaSpec schemaNoneSome (None :: Some Bool)
+
+    describe "SomeNone Bool" $
+      schemaSpec schemaSomeNone (None :: Some Bool)
+
+    describe "NoneSome (Either () ())" $
+      schemaSpec schemaNoneSome (None :: Some (Either () ()))
+
+    describe "SomeNone (Either () ())" $
+      schemaSpec schemaSomeNone (None :: Some (Either () ()))
+
+    describe "Three Bool Int" $
+      schemaSpec (schemaThree  schema schema) (Three :: Three Bool Int)
+
+    describe "Three Int Bool" $
+      schemaSpec (schemaThree' schema schema) (Three :: Three Int Bool)
+
     describe "Person" $ do
       schemaSpec schema pepe
+
     describe "Person2" $ do
       schemaSpec schema pepe2
       it "Person2 < Person" $ do
@@ -167,6 +280,7 @@ spec = do
       it "Person < Person2" $ do
         -- shouldBeAbleToEncode @Person  (extractSchema @Person2 schema)
         shouldBeAbleToDecode @Person2 (extractSchema @Person schema)
+
     describe "Person3" $ do
       -- disabled because encode diverges and does not support IterT yet
       -- schemaSpec schema pepe3
@@ -178,6 +292,7 @@ spec = do
 
         shouldNotDiverge $ evaluate $ encode martin
         shouldNotDiverge $ evaluate $ attemptSuccessOrError encoder_p3v0 martin
+
     describe "Person4" $ do
       schemaSpec schema pepe4
       let encoded_pepe4 = attemptSuccessOrError encoder_p4v0 pepe4
@@ -307,6 +422,7 @@ isSuccess = isJust . getSuccess
 isFailure :: Result a -> Bool
 isFailure = not . isSuccess
 
+-- | Parallel 'asum' for 'Either'
 asumEither :: forall e a . (Monoid e) => NE.NonEmpty (Either e a) -> Either e a
 asumEither = Data.Coerce.coerce asumExcept
   where
