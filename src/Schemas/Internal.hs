@@ -446,7 +446,7 @@ encodeToWith sc target = runAttempt $
             resDyn = lmap unsafeCoerce <$> res
             resDynLater = (pure . fromMaybe (error "impossible") . attemptSuccess) resDyn
         in  lmap fromf <$> res
-  go _ _   _       Empty       = pure $ pure . const emptyValue
+  go _ _   _       Empty       = empty
   go _ _tx (TEmpty _ _)     _  = pure $ const empty
   go _ ctx (TPrim n _ fromf) (Prim n')
     | n == n'   = pure $ pure . fromf
