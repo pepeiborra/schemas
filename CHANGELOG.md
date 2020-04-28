@@ -1,4 +1,7 @@
 # Revision history for schemas
+## 0.4.0.2 -- 2020-04-28
+* Fix bug in `instance HasSchema Either`
+
 ## 0.4.0.1 -- 2020-01-01
 * Replace breadth-first search with a greedy depth-first search
 
