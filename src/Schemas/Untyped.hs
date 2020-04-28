@@ -67,7 +67,7 @@ data Schema
   | Prim Text                 -- ^ Carries the name of primitive type
   | Named SchemaName Schema
   | Empty                     -- ^ The void schema
-  deriving (Eq, Data, Generic, Show)
+  deriving (Eq, Data, Generic)
 
 instance Monoid Schema where mempty = Empty
 instance Semigroup Schema where
@@ -77,8 +77,8 @@ instance Semigroup Schema where
   b <> OneOf aa = OneOf ([b] <> aa)
   a <> b        = OneOf [a,b]
 
-showsPrecSchema :: Integer -> Schema -> [Char] -> [Char]
-showsPrecSchema = go []   where
+instance Show Schema where
+  showsPrec = go []   where
     go _een p  Empty          = showParen (p>0) $ ("Empty " ++)
     go seen _ (Array     sc) = (('[' :) . go seen 5 sc . (']' :))
     go seen p (StringMap sc) = showParen (p > 5) (("Map " ++) . go seen 5 sc)
