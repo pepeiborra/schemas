@@ -41,15 +41,28 @@ import           Unions
 main :: IO ()
 main = hspecWith defaultConfig{configQuickCheckMaxSuccess = Just 10000} spec
 
-listSchema :: HasSchema a => TypedSchema [a]
-listSchema = named "list" $ union
-  [ ("Nil", alt _Empty)
-  , ( "Cons"
-    , altWith
-      (record $ (,) <$> field "head" fst <*> fieldWith listSchema "tail" snd)
-      _Cons
-    )
-  ]
+spec :: Spec
+spec = do
+  describe "encode" encodeSpec
+  describe "encodeTo" encodeToSpec
+  describe "isSubtypeOf" isSubtypeOfSpec
+
+  describe "extractSchema" $ do
+    it "Named" $
+      shouldNotDiverge $ evaluate $ extractSchema $ schema @Schema
+    it "Unions" $
+      extractSchema (union [("Just", alt (_Just @())), ("Nothing", alt _Nothing)])
+        `shouldBe` [Union [("Nothing", Unit) ,("Just", Unit)]]
+
+  describe "HasSchema" $ do
+    it "Left is a constructor of Either" $ do
+      shouldBeAbleToDecode @(Either () ()) [Union [constructor' "Left" Unit]]
+      -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "Left" Unit]]
+    it "left is a constructor of Either too" $ do
+      shouldBeAbleToDecode @(Either () ()) [Union [constructor' "left" Unit]]
+      -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "left" Unit]]
+
+  describe "examples" examplesSpec
 
 encodeSpec :: Spec
 encodeSpec = do
@@ -71,12 +84,6 @@ encodeSpec = do
     it "is the inverse of decoding for canonical schemas" $
       forAll (canonical <$> arbitrary) $ \sc ->
         getSuccess (pure encode >>= decode . ($ sc)) == Just sc
-
-canonical :: Schema -> Schema
-canonical = everywhere (mkT simplify)
-  where
-  simplify (OneOf [x]) = x
-  simplify other = other
 
 encodeToSpec :: Spec
 encodeToSpec = do
@@ -165,19 +172,8 @@ encodeToSpec = do
       it "Unions of 1 constructor" $ do
         union [("Just", alt (_Just @()))] `shouldBeAbleToEncodeTo` [Union [("Just", Unit)]]
 
-
-spec :: Spec
-spec = do
-  describe "encode" encodeSpec
-  describe "encodeTo" encodeToSpec
-  describe "extractSchema" $ do
-    it "Named" $
-      shouldNotDiverge $ evaluate $ extractSchema $ schema @Schema
-    it "Unions" $
-      extractSchema (union [("Just", alt (_Just @())), ("Nothing", alt _Nothing)])
-        `shouldBe` [Union [("Nothing", Unit) ,("Just", Unit)]]
-
-  describe "isSubtypeOf" $ do
+isSubtypeOfSpec :: Spec
+isSubtypeOfSpec = do
     it "is reflexive (in absence of OneOf)" $ forAll (sized genSchema `suchThat` (not . hasOneOf)) $ \sc ->
       sc `shouldBeSubtypeOf` sc
     it "subtypes can add fields" $ do
@@ -218,15 +214,8 @@ spec = do
     it "subtypes cannot introduce an array" $ do
       Array prim `shouldNotBeSubtypeOf` prim
 
-  describe "HasSchema" $ do
-    it "Left is a constructor of Either" $ do
-      shouldBeAbleToDecode @(Either () ()) [Union [constructor' "Left" Unit]]
-      -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "Left" Unit]]
-    it "left is a constructor of Either too" $ do
-      shouldBeAbleToDecode @(Either () ()) [Union [constructor' "left" Unit]]
-      -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "left" Unit]]
-
-  describe "examples" $ do
+examplesSpec :: Spec
+examplesSpec = do
     describe "Schema" $
       schemaSpec schema (schemaFor @Person2)
     let   person4_v0 = schemaFor @Person4
@@ -428,3 +417,19 @@ asumEither = Data.Coerce.coerce asumExcept
   where
     asumExcept :: NE.NonEmpty (Except e a) -> Except e a
     asumExcept = asum
+
+listSchema :: HasSchema a => TypedSchema [a]
+listSchema = named "list" $ union
+  [ ("Nil", alt _Empty)
+  , ( "Cons"
+    , altWith
+      (record $ (,) <$> field "head" fst <*> fieldWith listSchema "tail" snd)
+      _Cons
+    )
+  ]
+
+canonical :: Schema -> Schema
+canonical = everywhere (mkT simplify)
+  where
+  simplify (OneOf [x]) = x
+  simplify other = other
