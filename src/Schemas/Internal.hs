@@ -299,7 +299,7 @@ altWith sc p = UnionAlt p sc
 -- @
 --   data Education = Degree Text | PhD Text | NoEducation
 --
---   schemaEducation = union'
+--   schemaEducation = union
 --     [ (\"NoEducation\", alt #_NoEducation)
 --     , (\"Degree\"     , alt #_Degree)
 --     , (\"PhD\"        , alt #_PhD)
