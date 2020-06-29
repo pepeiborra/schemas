@@ -435,8 +435,6 @@ runResult maxSteps = execAttempt . runDelay maxSteps . getResult
 -- ---------------------------------------------------------------------------------------
 -- Encoding to JSON
 
-type Partial = IterT Maybe
-
 -- | Given a typed schema, produce a JSON encoder to the first version produced by 'extractSchema'
 encodeWith :: TypedSchemaFlex from a -> (from -> Value)
 encodeWith sc = ensureSuccess encoder

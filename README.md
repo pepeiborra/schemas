@@ -17,13 +17,13 @@ schemas can also be used in a GraphQL-like fashion, allowing clients to request 
 ## Why schemas
 
 A quick seach in Hackage reveals a large number of libraries about schemas, including [json-schema], [hjsonschema], [aeson-schema], [aeson-schemas] and [hschema], amongst others.
-There's undoubtedly a large amount of overlapping amongst all these libraries, so the immediate question is, why introduce another one ? 
+There's undoubtedly a large amount of overlapping amongst all these libraries, so the immediate question is, why introduce another one ?
 
 This library is a re-implementation of an encoding library found in the Strats codebase at Standard Chartered Bank, the origins of which is go back a few years in time.
 It predates other libraries that accomplish a similar task, including most of the ones mentioned before.
 The approach has worked well but the codebase is showing its age and limitations, notably the lack of decoding capabilities.
 This library extends the original approach with decoding and alternatives, hopefully keeping the good parts like the subtyping relation, intact.
- 
+
 [json-schema]: http://hackage.haskell.org/packages/json-schema
 [hjsonschema]: http://hackage.haskell.org/packages/hjsonschema
 [aeson-schema]: http://hackage.haskell.org/packages/aeson-schema
@@ -51,7 +51,7 @@ The `~` relation is an equivalence class, i.e. it is reflexive, symmetric and tr
 ## Alternative encodings
 
 Sometimes there is more than one way to encode a value. A field can be renamed or change its type, an optional field become mandatory, several fields can be merged into one, etc. Alternative encodings allow for backwards compatible schema evolution.
-This library support alternative encodings via the `Monoid` instance for typed schemas and the `Alternative` instance for `RecordFields`. 
+This library support alternative encodings via the `Monoid` instance for typed schemas and the `Alternative` instance for `RecordFields`.
 
 The schema `A|B` encodes a value in two alternative ways `A` and `B`. A message created with this schema may use encodings A, B or both. 'encode' will always create messages with all the possible encodings. While messages with multiple alternative encodings are not desirable for serialization, the desired message can be carved out using the subtyping relation. All the following hold:
 ```
@@ -63,7 +63,13 @@ A|B < B (the coercoin A|B -> B will succeed only if the message contains a  B en
 
 Typed schemas implement a limited form of alternative encodings via the `Alternative` instance for record fields. In the future a similar 'Alternative' instance for union constructors could be added.
 
-## Example
+## Walkthrough
+
+A fully commented example on how to define a service endpoint using *schemas*:
+ [walkthrough](examples.lhs)
+
+## Examples
+
 - [Person](example/Person.hs)
 - [Person2](example/Person2.hs)
 - [Person3](example/Person3.hs)

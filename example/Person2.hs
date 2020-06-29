@@ -27,7 +27,7 @@ data Person2 = Person2
   { name      :: String
   , age       :: Maybe Int           -- now optional
   , addresses :: [String]
-  , religion  :: (Maybe Religion)    -- new
+  , religion  :: Maybe Religion      -- new
   , education :: NonEmpty Education  -- renamed and turned into a list
   }
   deriving (Generic, Eq, Show)
