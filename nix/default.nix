@@ -1,6 +1,10 @@
-# inspired by https://github.com/tweag/capability/blob/master/nix/haskell/default.nix
-{ nixpkgsSrc ? ./nixpkgs }:
-import (import nixpkgsSrc) {
-  config = { allowBroken = true; };
-  overlays = [ (import ./haskell)];
+let
+  pkgs0 = (import ./sources.nix).nixpkgs;
+in
+{ ghc
+}:
+rec {
+  pkgs = import pkgs0 {};
+  haskellPackages = pkgs.haskell.packages.${ghc};
+  schemas = haskellPackages.callCabal2nix "schemas" ../. {};
 }
