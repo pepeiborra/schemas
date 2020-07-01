@@ -1,10 +1,8 @@
-with (import ./nix {});
+{ ghc ? "ghc883" }:
+let
+  nix = import ./nix { inherit ghc; };
+in
 
-{ ghc ? "ghc881"
-, haskellPackages ? haskell.packages.${ghc}
-}:
-
-let schemasEnv = haskellPackages.schemas.env.overrideAttrs(old: {
-      buildInputs = old.buildInputs ++ [haskellPackages.ghcide] ;
-    });
-in schemasEnv
+nix.schemas.env.overrideAttrs (old: {
+  buildInputs = old.buildInputs ++ [nix.haskellPackages.ghcide];
+})

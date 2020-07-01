@@ -1,8 +1,2 @@
-
-with (import ./nix {});
-
-{ ghc ? "ghc881"
-, haskellPackages ? haskell.packages.${ghc}
-}:
-
-haskellPackages.schemas
+{ ghc ? "ghc883" }:
+(import ./nix { inherit ghc; }).schemas
