@@ -20,14 +20,15 @@ import qualified Generics.SOP as SOP
 import           Person
 import           Schemas
 
--- | The v2 of the Person schema adds a new optional field 'religion'
+-- | The v2 of the Person schema adds a new optional field 'religion',
+--   makes the 'age' field optional,
 --   and renames 'studies' to 'education'
 data Person2 = Person2
   { name      :: String
-  , age       :: Maybe Int
+  , age       :: Maybe Int           -- now optional
   , addresses :: [String]
-  , religion  :: (Maybe Religion)  -- new
-  , education :: NonEmpty Education         -- renamed
+  , religion  :: (Maybe Religion)    -- new
+  , education :: NonEmpty Education  -- renamed and turned into a list
   }
   deriving (Generic, Eq, Show)
   deriving anyclass (SOP.Generic, SOP.HasDatatypeInfo)
@@ -47,13 +48,16 @@ instance HasSchema Person2 where
       $   Person2
       <$> field "name" Person2.name
       <*> (   optField "age" Person2.age
+              -- the 'age' field used to be mandatory
+              -- so we provide an alternative mandatory field definition
+              -- with a default value for the 'Nothing' case
           <|> fieldWith (dimap (fromMaybe (-1)) Just schema) "age" Person2.age
           )
       <*> field "addresses" Person2.addresses
       <*> optField "religion" Person2.religion
-      <*> (field "education" Person2.education <|> (NE.:| []) <$> field
-            "studies"
-            (NE.head . Person2.education)
+      <*> (   field "education" Person2.education
+              -- the education field used to be called studies and be a singleton
+          <|> (NE.:| []) <$> field "studies" (NE.head . Person2.education)
           )
 
 pepe2 :: Person2
@@ -63,11 +67,10 @@ pepe2 = Person2 "Pepe"
                 Nothing
                 [PhD "Computer Science", Degree "Engineering" ]
 
--- Person2 can be encoded in multiple ways, so the canonic encoding includes all ways
 -- >>> import qualified Data.ByteString.Lazy.Char8 as B
 -- >>> import Data.Aeson.Encode.Pretty
 -- >>> import Data.Either
--- >>> B.putStrLn $ encodePretty $ fromRight undefined (encodeTo (schemaFor @Person2)) pepe2
+-- >>> B.putStrLn $ encodePretty $ encode pepe2
 -- {
 --     "education": [
 --         {
@@ -84,9 +87,7 @@ pepe2 = Person2 "Pepe"
 --     "age": 38,
 --     "name": "Pepe"
 -- }
--- >>> import qualified Data.ByteString.Lazy.Char8 as B
--- >>> import Data.Aeson.Encode.Pretty
--- >>> B.putStrLn $ encodePretty $ encode pepe2
+-- >>> B.putStrLn $ encodePretty $ fromRight undefined (encodeTo (schemaFor @Person2)) pepe2
 -- {
 --     "education": [
 --         {
@@ -120,21 +121,20 @@ pepe2 = Person2 "Pepe"
 --     "name": "Pepe"
 -- }
 
-
 -- We can also upgrade a Person into a Person2, because the new field is optional
 -- >>> import Text.Pretty.Simple
 -- >>> pPrintNoColor $ fromRight undefined (decodeFrom @Person2 (schemaFor @Person)) (encode pepe)
--- Right 
---     ( Person2 
---         { name = "Pepe" 
+-- Right
+--     ( Person2
+--         { name = "Pepe"
 --         , age = Just 38
---         , addresses = 
---             [ "2 Edward Square" 
---             , "La Mar 10" 
---             ] 
+--         , addresses =
+--             [ "2 Edward Square"
+--             , "La Mar 10"
+--             ]
 --         , religion = Nothing
 --         , education = PhD { unPhD = "Computer Science" } :| []
---         } 
+--         }
 --     )
 
 -- >>> B.putStrLn $ encodePretty $ encode (schemaFor @Person2)

@@ -29,7 +29,9 @@ import           Schemas.Untyped
 -- HasSchema class and instances
 -- -----------------------------------------------------------------------------------
 
+-- | The class of types that have a default schema
 class HasSchema a where
+  -- | The default schema for this type
   schema :: TypedSchema a
 
 instance HasSchema () where
@@ -163,9 +165,7 @@ validatorsFor = extractValidators (schema @a)
 encode :: HasSchema a => (a -> Value)
 encode = encodeWith schema
 
--- | Attempt to encode to the target schema using the default schema.
---   First encodes using the default schema, then computes a coercion
---   applying 'isSubtypeOf', and then applies the coercion to the encoded data.
+-- | @encodeTo target@ returns an encoder from the default schema to the @target@ schema.
 encodeTo :: HasSchema a => Schema -> Either TracedMismatches (a -> Value)
 encodeTo = encodeToWith schema
 
@@ -173,8 +173,7 @@ encodeTo = encodeToWith schema
 decode :: HasSchema a => Value -> Result a
 decode = decodeWith schema
 
--- | Apply `isSubtypeOf` to construct a coercion from the source schema to the default schema,
---   apply the coercion to the data, and attempt to decode using the default schema.
+-- | @decodeFrom source@ returns a decoder from the @source@ schema to the default schema
 decodeFrom :: HasSchema a => Schema -> Result (Value -> Result a)
 decodeFrom = decodeFromWith schema
 

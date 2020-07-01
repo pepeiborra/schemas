@@ -21,7 +21,7 @@ data Person3 = Person3
   { name      :: String
   , age       :: Int
   , addresses :: [String]
-  , spouse    :: Maybe Person3
+  , spouse    :: Maybe Person3    -- new recursive field
   , religion  :: Maybe Religion
   , education :: [Education]
   }

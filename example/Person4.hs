@@ -16,7 +16,7 @@ import           Person
 import           Person2
 import           Schemas
 
--- | v3 adds recursive field 'spouse', which leads to cycles
+-- | v4 adds new fields
 data Person4 = Person4
   { name      :: String
   , age       :: Int
