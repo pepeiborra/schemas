@@ -13,7 +13,7 @@ module Schemas.SOP
   , gRecordFields
   , Options(..)
   , defOptions
-  , FieldEncode
+  , FieldEncode(..)
   )
 where
 
