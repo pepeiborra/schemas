@@ -262,9 +262,8 @@ Examples of non backwards compatible changes for encoding:
 
 The `Monoid TypedSchema` instance can be used to provide multiple schemas for a
 type, which can be used to implement non backwards compatible changes. Similarly,
-applicative record schemas have an `Alternative` instance for this. This works
-moderately well for small examples, but doesn`t scale well due to exponential search
-complexity.
+applicative record schemas have an `Alternative` instance for this.
+The search is greedy, so ordering of alternatives matter.
 
 The renaming of the `education` field in the `Person2` example is a non backwards
 compatible change.
@@ -309,12 +308,14 @@ the module shows the forest of schemas that comes out.
 I now think that alternatives create more problems than they solve
 and should probably be removed:
 
-- The search algorithm has exponential complexity, which forced me to use
-  an `IterT` monad to treat non-termination as an effect. This only works for
-  encoding, introduces overhead and complexity, etc.,
+- The optimal search algorithm has exponential complexity, which forced me to use
+  an `IterT` monad to treat non-termination as an effect. I could only make this
+  work for decoding, introduces overhead and complexity, etc.,
 
 - Eventually I gave up on optimal search and instead switched to a greedy
-  algorithm, making the `<>` operator non-commutative and leading to human error,
+  algorithm, making the `<>` operator non-commutative and leading to human error.
+  The `IterT` stayed as non-termination is still an issue for circular data and
+  recursive schemas.
 
 - Mismatch errors are crap, even for schemas that don't use alternatives,
 
@@ -337,7 +338,7 @@ This is not the case anymore and `encodeToWith`/`decodeFromWith` perform their
 own subtyping checking, which is ver unfortunate. To see why, consider the
 implications of alternatives:
 
-- For encoding, the denotational approach would involve creating a forest of
-JSON values, which would be very inefficient.
+- For encoding, the denotational approach would involve creating the forest of
+all possible JSON values, which would be very inefficient.
 - For decoding, the denotational approach would have similarly involve creating
 a forest of casts.

@@ -57,10 +57,8 @@ spec = do
   describe "HasSchema" $ do
     it "Left is a constructor of Either" $ do
       shouldBeAbleToDecode @(Either () ()) [Union [constructor' "Left" Unit]]
-      -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "Left" Unit]]
     it "left is a constructor of Either too" $ do
       shouldBeAbleToDecode @(Either () ()) [Union [constructor' "left" Unit]]
-      -- shouldBeAbleToEncode @(Either () ()) [Union [constructor' "left" Unit]]
 
   describe "examples" examplesSpec
 
@@ -253,9 +251,13 @@ examplesSpec = do
 
     describe "Person2" $ do
       schemaSpec schema pepe2
-      it "Person2 < Person" $ do
+      describe "Person2 < Person" $ do
+        it "Encode 2->1" $
          shouldBeAbleToEncode @Person2 (extractSchema @Person schema)
-         -- shouldBeAbleToDecode @Person (extractSchema @Person2 schema)
+        it "Decode 1->2" $
+         shouldBeAbleToDecode @Person2 (extractSchema @Person  schema)
+        it "Decode 2->1" $
+         shouldNotBeAbleToDecode @Person  (extractSchema @Person2 schema)
       it "pepe2 `as` Person" $ do
         let encoder = encodeTo (schemaFor @Person)
             encoded = attemptSuccessOrError encoder pepe2
@@ -266,13 +268,10 @@ examplesSpec = do
         decoder `shouldSatisfy` isSuccess
         (pure encode >>= getSuccessOrError decoder . ($ pepe))
           `shouldBe` Success pepe2{Person2.education = [Person.studies pepe]}
-      it "Person < Person2" $ do
-        -- shouldBeAbleToEncode @Person  (extractSchema @Person2 schema)
-        shouldBeAbleToDecode @Person2 (extractSchema @Person schema)
 
     describe "Person3" $ do
       -- disabled because encode diverges and does not support IterT yet
-      -- schemaSpec schema pepe3
+      schemaSpec schema pepe3
       it "can show the Person 3 (circular) schema" $
         shouldNotDiverge $ evaluate $ length $ show $ schemaFor @Person3
       it "can compute an encoder for Person3 (circular schema)" $
@@ -379,6 +378,9 @@ shouldBeAbleToEncodeTo tsc sc = asumEither (fmap (encodeToWith tsc) sc) `shouldS
 
 shouldBeAbleToDecode :: forall a . HasCallStack => (HasSchema a) => NE.NonEmpty Schema -> Expectation
 shouldBeAbleToDecode sc = asum (fmap (decodeFrom @a) sc) `shouldSatisfy` isSuccess
+
+shouldNotBeAbleToDecode :: forall a . HasCallStack => (HasSchema a) => NE.NonEmpty Schema -> Expectation
+shouldNotBeAbleToDecode sc = asum (fmap (decodeFrom @a) sc) `shouldSatisfy` not . isSuccess
 
 makeField :: a -> Schema -> Bool -> (a, Field)
 makeField n t isReq = (n, Field t isReq)
