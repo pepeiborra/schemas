@@ -1,9 +1,9 @@
 {
     "ghcide": {
-        "branch": "master",
+        "branch": "perf-spaninfo",
         "description": "A library for building Haskell IDE tooling",
         "homepage": "",
-        "owner": "digital-asset",
+        "owner": "pepeiborra",
         "repo": "ghcide",
         "rev": "e0f91bf65cd29568d71fe47ad10cd8991fc1f776",
         "sha256": "172awij37a20jlay6sxpg7hxn7kd8gacr2j60xakkjzf6kd3qap1",
