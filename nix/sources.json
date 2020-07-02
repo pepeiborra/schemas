@@ -1,4 +1,16 @@
 {
+    "ghcide": {
+        "branch": "master",
+        "description": "A library for building Haskell IDE tooling",
+        "homepage": "",
+        "owner": "digital-asset",
+        "repo": "ghcide",
+        "rev": "e0f91bf65cd29568d71fe47ad10cd8991fc1f776",
+        "sha256": "172awij37a20jlay6sxpg7hxn7kd8gacr2j60xakkjzf6kd3qap1",
+        "type": "tarball",
+        "url": "https://github.com/pepeiborra/ghcide/archive/e0f91bf65cd29568d71fe47ad10cd8991fc1f776.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+    },
     "niv": {
         "branch": "master",
         "description": "Easy dependency management for Nix projects",

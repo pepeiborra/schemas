@@ -1,10 +1,19 @@
 let
-  pkgs0 = (import ./sources.nix).nixpkgs;
+  sources = import ./sources.nix;
+  pkgs = import sources.nixpkgs {};
 in
 { ghc
 }:
-rec {
-  pkgs = import pkgs0 {};
+let
   haskellPackages = pkgs.haskell.packages.${ghc};
-  schemas = haskellPackages.callCabal2nix "schemas" ../. {};
+in
+  with pkgs.haskell.lib;
+  with haskellPackages;
+rec {
+  inherit pkgs;
+  inherit haskellPackages;
+  schemas = callCabal2nix "schemas" ../. {};
+  ghcide = dontCheck (callCabal2nix "ghcide" sources.ghcide {
+    lsp-test = dontCheck (callHackage "lsp-test" "0.11.0.2" {});
+  });
 }
