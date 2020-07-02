@@ -60,28 +60,53 @@ import           Unsafe.Coerce
 
 -- | @TypedSchemaFlex enc dec@ is a schema for encoding from @enc@ and decoding to @dec@.
 --   Usually we want @enc@ and @dec@ to be the same type but this flexibility comes in handy
---   for composition.
+--   for composition
 --
 --   * introduction forms: 'record', 'enum', 'schema'
 --   * operations: 'encodeToWith', 'decodeFrom', 'extractSchema'
 --   * composition: 'dimap', 'union', 'stringMap', 'liftPrism'
 --
 data TypedSchemaFlex from a where
-  TNamed ::SchemaName -> TypedSchemaFlex from' a' -> (a' -> a) -> (from -> from') -> TypedSchemaFlex from a
-  TEnum  ::(NonEmpty (Text, a)) -> (from -> Text) -> TypedSchemaFlex from a
-  TArray ::TypedSchemaFlex b b -> (Vector b -> a) -> (from -> Vector b) -> TypedSchemaFlex from a
-  TMap   ::TypedSchemaFlex b b -> (HashMap Text b -> a) -> (from -> HashMap Text b) -> TypedSchemaFlex from a
-  -- | Encoding and decoding support all alternatives
-  TAllOf ::NonEmpty (TypedSchemaFlex from a) -> TypedSchemaFlex from a
-  -- | Decoding from all alternatives, but encoding only to one
+  -- TypedSchemaFlex wants to be a GADT, but that would preclude a Profunctor instance.
+  -- So instead it's a normal ADT with embedded coercions
+
+  -- | Name wrapper, to support recursive schemas
+  TNamed :: SchemaName
+         -> TypedSchemaFlex from' a'
+         -> (a' -> a)                  -- coercion
+         -> (from -> from')            -- coercion
+         -> TypedSchemaFlex from a     -- TypedSchema from' a'
+  TEnum  :: (NonEmpty (Text, a))
+         -> (from -> Text)
+         -> TypedSchemaFlex from a
+  TArray :: TypedSchemaFlex b b
+         -> (Vector b -> a)            -- coercion
+         -> (from -> Vector b)         -- coercion
+         -> TypedSchemaFlex from a     -- TypedSchema (Vector b) (Vector b)
+  TMap   :: TypedSchemaFlex b b
+         -> (HashMap Text b -> a)      -- coercion
+         -> (from -> HashMap Text b)   -- coercion
+         -> TypedSchemaFlex from a     -- TypedSchema (HashMap Text b) (HashMap Text b)
+  -- | Encoding and decoding from/to all the alternatives, with search
+  TAllOf :: NonEmpty (TypedSchemaFlex from a)
+         -> TypedSchemaFlex from a
+  -- | Decoding from all alternatives but encoding only to one, for unions
   TOneOf :: TypedSchemaFlex from' a'
          -> TypedSchemaFlex from'' a''
-         -> (Either a' a'' -> a)
-         -> (from -> Either from' from'')
-         -> TypedSchemaFlex from a
-  TEmpty :: (Void -> a) -> (from -> Void) -> TypedSchemaFlex from a
-  TPrim  :: Text -> (Value -> A.Result a) -> (from -> Value) -> TypedSchemaFlex from a
-  RecordSchema ::RecordFields from a -> TypedSchemaFlex from a
+         -> (Either a' a'' -> a)          -- coercion
+         -> (from -> Either from' from'') -- coercion
+         -> TypedSchemaFlex from a        -- TypedSchema (Either from' from'') (Either a' a'')
+  -- | Unit for TAllOf
+  TEmpty :: (Void -> a)                   -- coercion
+         -> (from -> Void)                -- coercion
+         -> TypedSchemaFlex from a        -- TypedSchema Void Void
+  -- | Embed a Value isomorphism as a primitive schema
+  TPrim  :: Text
+         -> (Value -> A.Result a)         -- coercion
+         -> (from -> Value)               -- coercion
+         -> TypedSchemaFlex from a        -- TypedSchema Value (A.Result a)
+  -- | Schema for a record type
+  RecordSchema :: RecordFields from a -> TypedSchemaFlex from a
 
 instance Show (TypedSchemaFlex from a) where
   show = show . NE.head . extractSchema
@@ -101,11 +126,10 @@ instance Profunctor TypedSchemaFlex where
   dimap g f (RecordSchema sc      ) = RecordSchema (dimap g f sc)
 
 instance Monoid (TypedSchemaFlex Void Void) where
-  mempty = emptySchema
+  mempty = TEmpty id id
 
 instance Semigroup (TypedSchemaFlex f a) where
   -- | Allows defining multiple schemas for the same thing, effectively implementing versioning.
-  -- a <> b | pTraceShow ("Semigroup TypedSchema", a,b) False= undefined
   x         <> TEmpty{}  = x
   TEmpty{}  <> x         = x
   TAllOf aa <> b         = allOf (aa <> [b])
@@ -337,7 +361,6 @@ oneOf (a :| rest) = go (a:rest) where
 --   Beware when using on schemas with multiple alternatives,
 --   as the number of versions is exponential.
 extractSchema :: TypedSchemaFlex from a -> NonEmpty Schema
--- extractSchema xx | pTraceShow ("extractSchema") False = undefined
 extractSchema (TNamed n sc _ _) = Named n <$> extractSchema sc
 extractSchema (TPrim n _  _   ) = pure $ Prim n
 extractSchema (TOneOf s s' _ _) = (<>) <$> extractSchema s <*> extractSchema s'
@@ -412,8 +435,6 @@ runResult maxSteps = execAttempt . runDelay maxSteps . getResult
 -- ---------------------------------------------------------------------------------------
 -- Encoding to JSON
 
-type Partial = IterT Maybe
-
 -- | Given a typed schema, produce a JSON encoder to the first version produced by 'extractSchema'
 encodeWith :: TypedSchemaFlex from a -> (from -> Value)
 encodeWith sc = ensureSuccess encoder
@@ -436,7 +457,6 @@ encodeToWith sc target = runAttempt $
     -> TypedSchemaFlex from a
     -> Schema
     -> Attempt TracedMismatches (from -> Maybe Value)
-  -- go _ _ sc s | pTraceShow ("encode", sc, s) False = undefined
   go env ctx (TNamed n sct _ fromf) (Named n' sc) | n == n' =
     case lookup n env of
       Just res ->
@@ -510,7 +530,6 @@ encodeToWith sc target = runAttempt $
     f <- go i ctx sc t
     return $ A.Array . fromList . (: []) <.> f
   go _ _tx _ Unit    = pure $ const (pure emptyValue)
-  -- go _ _ other src | pTraceShow ("mismatch", other, src) False = undefined
   go _ ctx other src =
     failWith ctx (SchemaMismatch (NE.head $ extractSchema other) src)
 
@@ -583,7 +602,6 @@ decodeFromWith sc source =  Result $ todoExposeNonTermination $ go [] [] sc sour
     -> TypedSchemaFlex from a
     -> Schema
     -> Attempt TracedMismatches (Value -> Result a)
-  -- go _ _ t s | pTraceShow ("decode", t,s) False = undefined
   go _   ctx  TEmpty{} Empty = pure $ const $ failWith ctx EmptySchema
   go env ctx (TNamed n sc tof _) (Named n' s) | n == n' = case lookup n env of
     Just sol ->
@@ -594,7 +612,6 @@ decodeFromWith sc source =  Result $ todoExposeNonTermination $ go [] [] sc sour
           solDyn = (fmap . fmap . fmap) unsafeCoerce solDelayed
           solDynLater = pure $ fromMaybe (error "impossible") $ attemptSuccess solDyn
       in  (fmap . fmap . fmap) tof sol
-  -- go env ctx (TNamed _ sc tof _) s = (fmap . fmap . fmap) tof $ go env ctx sc s
   go _nv ctx (TEnum optsTarget _) s@(Enum optsSource) =
     case
         NE.nonEmpty

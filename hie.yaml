@@ -1,10 +1,8 @@
-cradle: 
-#  cabal: 
-#    component: spec
-  direct:
-    arguments:
-      - -isrc
-      - -itest
-      - -iexample
-      - -Wall
-      - -XTypeApplications
+cradle:
+  cabal:
+    - path: "src"
+      component: "lib:schemas"
+    - path: "test"
+      component: "schemas:test:spec"
+    - path: "example"
+      component: "schemas:test:spec"
