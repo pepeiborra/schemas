@@ -1,4 +1,8 @@
 # Revision history for schemas
+
+## Unreleased
+* Export `FieldEncode` class members from `Schemas.SOP`.
+
 ## 0.4.0.2 -- 2020-04-28
 * Fix bug in `instance HasSchema Either`
 
