@@ -106,3 +106,4 @@ test-suite spec
                      , text
                      , transformers
                      , unordered-containers
+  build-tool-depends:  hspec-discover:hspec-discover
