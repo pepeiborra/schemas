@@ -1,7 +1,4 @@
 {-# LANGUAGE ApplicativeDo              #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE DeriveTraversable          #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
@@ -11,7 +8,6 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
@@ -76,7 +72,7 @@ data TypedSchemaFlex from a where
          -> (a' -> a)                  -- coercion
          -> (from -> from')            -- coercion
          -> TypedSchemaFlex from a     -- TypedSchema from' a'
-  TEnum  :: (NonEmpty (Text, a))
+  TEnum  :: NonEmpty (Text, a)
          -> (from -> Text)
          -> TypedSchemaFlex from a
   TArray :: TypedSchemaFlex b b
@@ -145,12 +141,12 @@ named :: SchemaName -> TypedSchemaFlex from' a -> TypedSchemaFlex from' a
 named n sc = TNamed n sc id id
 
 -- | @enum values mapping@ construct a schema for a non empty set of values with a 'Text' mapping
-enum :: Eq a => (a -> Text) -> (NonEmpty a) -> TypedSchema a
+enum :: Eq a => (a -> Text) -> NonEmpty a -> TypedSchema a
 enum showF opts = TEnum
   alts
   (fromMaybe (error "invalid alt") . flip lookup altMap)
  where
-  altMap = fmap swap $ alts --TODO fast lookup
+  altMap = fmap swap alts --TODO fast lookup
   alts   = opts <&> \x -> (showF x, x)
 
 -- | @stringMap sc@ is the schema for a stringmap where the values have schema @sc@
@@ -247,7 +243,7 @@ instance Profunctor RecordFields where
 -- | Map a function over all the field names
 overFieldNames :: (Text -> Text) -> RecordFields from a -> RecordFields from a
 overFieldNames f =
-  RecordFields . hoistAlt ((over fieldNameL f)) . getRecordFields
+  RecordFields . hoistAlt (over fieldNameL f) . getRecordFields
 
 -- | Wrap an applicative record schema
 record :: RecordFields from a -> TypedSchemaFlex from a
@@ -259,11 +255,11 @@ fieldWith schema n get = fieldWith' (lmap get schema) n
 
 -- | Generalised version of 'fieldWith'
 fieldWith' :: TypedSchemaFlex from a -> Text -> RecordFields from a
-fieldWith' (schema) n = RecordFields $ liftAlt (RequiredAp n schema)
+fieldWith' schema n = RecordFields $ liftAlt (RequiredAp n schema)
 
 -- | Project a schema through a Prism.
 liftPrism :: Prism s t a b -> TypedSchemaFlex a b -> TypedSchemaFlex t t -> TypedSchemaFlex s t
-liftPrism p sc otherwise = withPrism p $ \t f -> TOneOf otherwise sc (either id t) f
+liftPrism p sc other = withPrism p $ \t f -> TOneOf other sc (either id t) f
 
 -- | Returns a partial schema.
 --   When encoding/decoding a Nothing value,
@@ -329,7 +325,7 @@ altWith sc p = UnionAlt p sc
 --     , (\"PhD\"        , alt #_PhD)
 --     ]
 --   @
-union :: (NonEmpty ((Text,UnionAlt from))) -> TypedSchema from
+union :: NonEmpty (Text, UnionAlt from) -> TypedSchema from
 union (a :| rest) = go (a:rest) where
   go ((n, UnionAlt p sc) : rest) = liftPrism p (RecordSchema $ fieldWith' sc n) $ go rest
   go [] = TEmpty absurd (error "incomplete union definition")
@@ -346,7 +342,7 @@ union (a :| rest) = go (a:rest) where
 --     ]
 --   @
 -- Alternatives are searched greedily in a top-down order.
-oneOf :: (NonEmpty (UnionAlt from)) -> TypedSchema from
+oneOf :: NonEmpty (UnionAlt from) -> TypedSchema from
 oneOf (a :| rest) = go (a:rest) where
   go (UnionAlt p sc : rest) = liftPrism p sc $ go rest
   go [] = TEmpty absurd (error "incomplete oneOf definition")
@@ -369,8 +365,8 @@ extractSchema (TEnum opts _   ) = pure $ Enum (fst <$> opts)
 extractSchema (TArray sc _ _  ) = Array     <$> extractSchema sc
 extractSchema (TMap   sc _ _  ) = StringMap <$> extractSchema sc
 extractSchema (RecordSchema rs) =
-  case foldMap (\x -> pure (Record (fromList x))) (extractFields rs) of
-    [] -> pure Empty
+  case foldMap (pure . Record . fromList) (extractFields rs) of
+    []    -> pure Empty
     other -> fromList other
 extractSchema TEmpty{} = pure Empty
 
@@ -392,10 +388,9 @@ extractValidators = go where
   go :: TypedSchemaFlex from a -> Validators
   go (TPrim n parse _) =
     [ ( n
-      , (\x -> case parse x of
+      , \x -> case parse x of
           A.Success _ -> Nothing
           A.Error   e -> Just (pack e)
-        )
       )
     ]
   go (TOneOf a b _ _) = go a <> go b
@@ -445,8 +440,8 @@ encodeWith sc = ensureSuccess encoder
 -- | Given source and target schemas, produce a JSON encoder
 encodeToWith :: TypedSchemaFlex from a -> Schema -> Either TracedMismatches (from -> Value)
 encodeToWith sc target = runAttempt $
-  (fmap.fmap) (fromMaybe (error "Empty schema")) $
-  (go [] [] sc (target))
+  (fmap.fmap) (fromMaybe (error "Empty schema"))
+  (go [] [] sc target)
  where
   failWith ctx m = throwError [(reverse ctx, m)]
 
@@ -498,7 +493,7 @@ encodeToWith sc target = runAttempt $
    where
     targetFields = Set.fromList (Map.keys target)
 
-    liftGo   = (either (const empty) pure . runAttempt)
+    liftGo = either (const empty) pure . runAttempt
 
     extractField
       :: forall from a
@@ -615,7 +610,7 @@ decodeFromWith sc source =  Result $ todoExposeNonTermination $ go [] [] sc sour
   go _nv ctx (TEnum optsTarget _) s@(Enum optsSource) =
     case
         NE.nonEmpty
-          $ NE.filter (`notElem` map fst (NE.toList optsTarget)) (optsSource)
+          $ NE.filter (`notElem` map fst (NE.toList optsTarget)) optsSource
       of
         Just xx -> failWith ctx $ MissingEnumChoices xx
         Nothing -> pure $ \case

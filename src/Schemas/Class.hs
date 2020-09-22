@@ -1,13 +1,12 @@
+{-# LANGUAGE AllowAmbiguousTypes        #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE OverloadedLabels    #-}
-{-# LANGUAGE OverloadedLists     #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE OverloadedLists            #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 module Schemas.Class where
 
 import           Control.Lens         hiding (_Empty, Empty, enum, (<.>))
@@ -199,7 +198,7 @@ optFieldEither
     -> (from -> Either e a)
     -> e
     -> RecordFields from (Either e a)
-optFieldEither n f e = optFieldEitherWith (lmap f (liftRight schema)) n e
+optFieldEither n f = optFieldEitherWith (lmap f (liftRight schema)) n
 
 -- | @alt name prism@ introduces a discriminated union alternative with the default schema
 alt :: HasSchema a => Prism' from a -> UnionAlt from

@@ -3,7 +3,6 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
 
@@ -101,7 +100,7 @@ instance HasSchema OpenApi2Type where
   schema = Schemas.enum (Text.toLower . Text.pack . drop 8 . show)
                         [minBound .. maxBound]
 
-data OpenApi2Options = OpenApi2Options
+newtype OpenApi2Options = OpenApi2Options
   { -- | Please tell me what to do with Prims
     primMapping :: Text -> Maybe OpenApi2Schema
   }

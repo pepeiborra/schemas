@@ -4,9 +4,9 @@
 {-# LANGUAGE OverloadedLists     #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE PatternSynonyms     #-}
-{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+
 module SchemasSpec where
 
 import           Control.Exception
@@ -144,7 +144,7 @@ encodeToSpec = do
 
     describe "Either (nested)" $ do
       let -- A schema supporting both camelCase and lowercase either
-          source :: TypedSchema (((), Either () ()))
+          source :: TypedSchema ((), Either () ())
           source = schema
 
           wrap sc = Record [("$1", Field (schemaFor @()) True), ("$2", Field sc True)]
@@ -196,7 +196,7 @@ isSubtypeOfSpec = do
         [makeField "def" prim True, makeField "a" prim True]
     it "subtypes can remove Optional fields" $ do
       Record [makeField "def" prim True] `shouldBeSubtypeOf` Record
-        [makeField "def" prim True, makeField "a" prim (False)]
+        [makeField "def" prim True, makeField "a" prim False]
     it "subtypes can remove enum choices" $ do
       Enum ["def"] `shouldBeSubtypeOf` Enum ["A", "def"]
     it "subtypes cannot add enum choices" $ do
@@ -206,7 +206,7 @@ isSubtypeOfSpec = do
         `shouldBeSubtypeOf` Union [constructor' "A" Unit, constructor' "B" Unit]
     it "subtypes cannot add constructors" $ do
       Union [constructor' "A" prim, constructor' "B" Unit]
-        `shouldNotBeSubtypeOf` Union [constructor' "A" (prim)]
+        `shouldNotBeSubtypeOf` Union [constructor' "A" prim]
     it "subtypes can drop an array" $ do
       prim `shouldBeSubtypeOf` Array prim
     it "subtypes cannot introduce an array" $ do
@@ -262,7 +262,7 @@ examplesSpec = do
         let encoder = encodeTo (schemaFor @Person)
             encoded = attemptSuccessOrError encoder pepe2
         encoder `shouldSatisfy` isRight
-        decode (encoded) `shouldBe` Success pepe
+        decode encoded `shouldBe` Success pepe
       it "pepe `as` Person2" $ do
         let decoder = decodeFrom (schemaFor @Person)
         decoder `shouldSatisfy` isSuccess
@@ -334,7 +334,7 @@ schemaSpec sc ex = do
     decoder `shouldSatisfy` isSuccess
   it "Does not diverge decoding bad input" $ do
      let d = join $ Attempt.attemptSuccess $ runResult 1000 $ decodeFromWith sc (NE.head $ extractSchema sc)
-     shouldNotDiverge $ evaluate $ d
+     shouldNotDiverge $ evaluate d
      shouldNotDiverge $ evaluate $ join $ join $ Attempt.attemptSuccess $ runResult 1000 $ traverse ($ A.String "Foo") d
   it "Roundtrips ex" $ do
     let res = getSuccessOrError decoder encodedExample

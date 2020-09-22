@@ -1,0 +1,11 @@
+- ignore:
+    name: "Use fmap"
+- ignore:
+    name: "Use <$>"
+- ignore:
+    name: "Use record patterns"
+- ignore:
+    name: "Unused LANGUAGE pragma"
+    within: Schemas
+- ignore:
+    name: "Use camelCase"

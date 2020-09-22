@@ -1,18 +1,16 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeSynonymInstances #-}
-{-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE OverloadedLabels    #-}
-{-# LANGUAGE OverloadedLists     #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE PatternSynonyms     #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
-{-# LANGUAGE ViewPatterns        #-}
+{-# LANGUAGE OverloadedLists            #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE PatternSynonyms            #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE ViewPatterns               #-}
 {-# OPTIONS -Wno-name-shadowing    #-}
 
 module Schemas.Untyped where
@@ -79,8 +77,8 @@ instance Semigroup Schema where
 
 instance Show Schema where
   showsPrec = go []   where
-    go _een p  Empty          = showParen (p>0) $ ("Empty " ++)
-    go seen _ (Array     sc) = (('[' :) . go seen 5 sc . (']' :))
+    go _een p  Empty         = showParen (p>0) ("Empty " ++)
+    go seen _ (Array     sc) = ('[' :) . go seen 5 sc . (']' :)
     go seen p (StringMap sc) = showParen (p > 5) (("Map " ++) . go seen 5 sc)
     go _een p (Enum opts) =
       showParen (p > 5) (intercalate "|" (NE.toList $ fmap unpack opts) ++)
@@ -103,16 +101,18 @@ instance Show Schema where
             )
         . ('}' :)
     go _een _ (Prim t    ) = (unpack t ++)
-    go seen p (Named n sc) = case n `elem` seen of
-      False ->
+    go seen p (Named n sc) =
+      if n `elem` seen then
         ("let " ++)
           . (show n ++)
           . (" = " ++)
           . self
           . (" in " ++)
           . (show n ++)
-      True -> (show n ++)
-      where self = go (n : seen) p sc
+      else
+        (show n ++)
+      where
+        self = go (n : seen) p sc
 
 data Field = Field
   { fieldSchema :: Schema
@@ -285,7 +285,7 @@ isSubtypeOf validators sub sup = runExcept $ go [] [] sup sub
     ff <- forM (Map.toList opts') $ \(n', f'@(Field sc' _)) -> do
       case Map.lookup n' opts of
         Nothing -> do
-          pure $ over (_Object) (Map.delete n')
+          pure $ over _Object (Map.delete n')
         Just f@(Field sc _) -> do
           unless (not (isRequired f) || isRequired f') $
             failWith ctx $ OptionalRecordField n'

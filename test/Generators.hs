@@ -4,9 +4,9 @@
 {-# LANGUAGE ImpredicativeTypes         #-}
 {-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TupleSections              #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Generators where
 
 import           Control.Lens    (review)
@@ -42,7 +42,7 @@ newtype SmallNatural = SmallNatural Natural
   deriving (Eq, Ord, Num)
   deriving newtype Show
 
-instance Arbitrary (SmallNatural) where
+instance Arbitrary SmallNatural where
   arbitrary = fromIntegral <$> choose (0::Int, 10)
   shrink 0 = []
   shrink n = [n-1]

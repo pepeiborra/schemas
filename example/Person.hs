@@ -6,7 +6,7 @@
 {-# LANGUAGE OverloadedLabels      #-}
 {-# LANGUAGE OverloadedLists       #-}
 {-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE StandaloneDeriving    #-}
+
 module Person where
 
 import           Data.Generics.Labels  ()
